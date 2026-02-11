@@ -43,14 +43,24 @@ class SummaryStrategyConfig(BaseModel):
     output_schema: dict[str, Any] = Field(default_factory=dict)
 
 
+class LocalToolConfig(BaseModel):
+    """One local tool: id, name, description, and command (args as list or single string)."""
+
+    id: str = Field(..., description="Unique tool id (e.g. echo, date)")
+    name: str = Field(..., description="Display name")
+    description: str = Field("", description="What the tool does")
+    command: list[str] | str = Field(..., description="Command and args; str is split by shlex; use {key} for params")
+
+
 class ModelsConfig(BaseModel):
-    """Root config for models.yaml: embedding, chat, and summary strategies."""
+    """Root config for models.yaml: embedding, chat, summary strategies, local tools."""
 
     embedding_providers: dict[str, EmbeddingProviderConfig] = Field(default_factory=dict)
     default_embedding_provider: str | None = Field(None, alias="default_embedding_provider")
     chat_providers: dict[str, ChatProviderConfig] = Field(default_factory=dict)
     default_chat_provider: str | None = Field(None, alias="default_chat_provider")
     summary_strategies: dict[str, SummaryStrategyConfig] = Field(default_factory=dict)
+    local_tools: list[LocalToolConfig] = Field(default_factory=list, description="Registered local tools for GET/POST /tools")
 
     model_config = {"extra": "forbid", "populate_by_name": True}
 

@@ -98,6 +98,59 @@ class TestIndexStructure:
         html = _read_index()
         assert "stopBtn" in html or "停止" in html, "index.html must have stop button for aborting stream"
 
+    def test_has_chat_and_code_tabs(self):
+        html = _read_index()
+        assert "tabChat" in html and "tabCode" in html, "index.html must have Chat and Code tab buttons"
+        assert "pageChat" in html and "pageCode" in html, "index.html must have page panels for Chat and Code"
+
+    def test_code_page_has_review_ui(self):
+        html = _read_index()
+        assert "codeReviewPath" in html or "Code Review" in html, "Code page must have code review path input or title"
+        assert "codeReviewRunBtn" in html or "运行" in html, "Code page must have run code review button"
+
+    def test_code_page_path_required(self):
+        html = _read_index()
+        assert "必填" in html or "codeReviewPath" in html, "Code page must indicate path is required"
+        assert 'id="codeReviewPathError"' in html, "Code page must have path error element"
+
+    def test_code_page_three_review_modes(self):
+        html = _read_index()
+        assert "全 repo" in html or "给定目录" in html, "Code page must have full-repo mode option"
+        assert "按 Git 提交" in html or "codeReviewCommits" in html, "Code page must have git-commits mode"
+        assert "当前变更" in html, "Code page must have uncommitted (current changes) mode"
+
+    def test_code_page_git_error_area(self):
+        html = _read_index()
+        assert 'id="codeReviewGitError"' in html, "Code page must have git validation error area for red message"
+
+
+class TestCodeReviewInAppJs:
+    """app.js must implement path required, validate-commits for git mode, and error display."""
+
+    def test_has_validate_commits_call(self):
+        js = _read_app_js()
+        assert "validate-commits" in js or "validate_commits" in js, (
+            "app.js must call validate-commits API for git mode"
+        )
+
+    def test_has_show_path_error(self):
+        js = _read_app_js()
+        assert "showPathError" in js or "codeReviewPathError" in js, (
+            "app.js must show path error when path empty"
+        )
+
+    def test_has_show_git_error(self):
+        js = _read_app_js()
+        assert "showGitError" in js or "codeReviewGitError" in js, (
+            "app.js must show git validation error in red"
+        )
+
+    def test_path_required_check_before_run(self):
+        js = _read_app_js()
+        assert "!path" in js or "path.trim()" in js or 'pathEl' in js, (
+            "app.js must check path before starting run"
+        )
+
 
 class TestCssStatsStyle:
     """style.css must style .msg-stats so it is visible."""

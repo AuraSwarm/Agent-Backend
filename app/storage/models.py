@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, SmallInteger, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -84,3 +84,22 @@ class SessionSummary(Base):
     session = relationship("Session", back_populates="summaries")
 
     __table_args__ = (Index("ix_session_summaries_session_id", "session_id"),)
+
+
+class CodeReview(Base):
+    """Saved code review result for history (list + detail)."""
+
+    __tablename__ = "code_reviews"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    mode: Mapped[str] = mapped_column(String(32), nullable=False)  # path, git, uncommitted
+    path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    commits: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)  # for mode=git
+    uncommitted_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    report: Mapped[str] = mapped_column(Text, nullable=False)
+    files_included: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(512), nullable=True)  # for list display
+
+    __table_args__ = (Index("ix_code_reviews_created_at", "created_at"),)

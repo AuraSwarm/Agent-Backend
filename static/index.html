@@ -25,9 +25,23 @@
         </ul>
       </div>
     </div>
+    <div class="sidebar-section sidebar-code-reviews">
+      <h2 class="sidebar-heading">Review 历史</h2>
+      <div class="conversation-list-scroll" id="codeReviewListScroll">
+        <ul class="conversation-list" id="codeReviewList">
+          <li class="conversation-loading" id="codeReviewLoading">加载中…</li>
+        </ul>
+      </div>
+    </div>
   </aside>
 
   <div class="app-main">
+    <nav class="page-tabs" id="pageTabs" role="tablist">
+      <button type="button" class="page-tab active" id="tabChat" role="tab" aria-selected="true">Chat</button>
+      <button type="button" class="page-tab" id="tabCode" role="tab" aria-selected="false">Code</button>
+    </nav>
+
+    <div id="pageChat" class="page" role="tabpanel">
     <header>
       <select class="model-select" id="modelSelect" aria-label="Model">
         <option value="">Loading models…</option>
@@ -67,6 +81,49 @@
         <p class="input-hint">Shift+Enter 换行，Enter 发送；「深度思考」分步骤推理，「深度研究」研究员式深度分析</p>
       </div>
     </footer>
+    </div>
+
+    <div id="pageCode" class="page hidden" role="tabpanel">
+      <div class="code-page-inner">
+        <section class="code-review-section">
+          <h2 class="code-section-title">Code Review</h2>
+          <p class="code-section-desc">对指定路径下的代码执行 Code Review（使用 Copilot 或 Claude CLI），并生成报告。路径必填。</p>
+          <div class="code-review-form">
+            <div class="form-row">
+              <label>Review 模式</label>
+              <select id="codeReviewMode">
+                <option value="path">1. 全 repo（给定目录下所有代码）</option>
+                <option value="git">2. 按 Git 提交</option>
+                <option value="uncommitted">3. 当前变更</option>
+              </select>
+            </div>
+            <div class="form-row" id="codeReviewPathRow">
+              <label for="codeReviewPath">路径（必填，相对根目录）</label>
+              <input type="text" id="codeReviewPath" value="app" placeholder="例如 app 或 app/main.py" required />
+              <span class="form-error hidden" id="codeReviewPathError">请填写路径</span>
+            </div>
+            <div class="form-row hidden" id="codeReviewCommitsRow">
+              <label for="codeReviewCommits">Git 提交（每行一个或空格分隔，需在当前树且工作区 clean）</label>
+              <textarea id="codeReviewCommits" rows="3" placeholder="abc123 def456&#10;或每行一个 commit hash"></textarea>
+              <span class="form-error hidden" id="codeReviewGitError"></span>
+            </div>
+            <div class="form-row">
+              <label for="codeReviewProvider">Provider</label>
+              <select id="codeReviewProvider">
+                <option value="claude">Claude</option>
+                <option value="copilot">Copilot</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-primary" id="codeReviewRunBtn">运行 Code Review</button>
+          </div>
+          <div class="code-review-output-wrap">
+            <pre id="codeReviewLogs" class="code-review-logs"></pre>
+            <div id="codeReviewReport" class="code-review-report markdown-body"></div>
+            <p id="codeReviewStatus" class="code-review-status"></p>
+          </div>
+        </section>
+      </div>
+    </div>
   </div>
   </div>
 

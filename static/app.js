@@ -765,6 +765,318 @@
 
   newChatBtn.addEventListener("click", newChat);
 
+  (function initPageTabs() {
+    var tabChat = document.getElementById("tabChat");
+    var tabCode = document.getElementById("tabCode");
+    var pageChat = document.getElementById("pageChat");
+    var pageCode = document.getElementById("pageCode");
+    if (!tabChat || !tabCode || !pageChat || !pageCode) return;
+    function showPage(name) {
+      var isChat = name === "chat";
+      pageChat.classList.toggle("hidden", !isChat);
+      pageCode.classList.toggle("hidden", isChat);
+      tabChat.classList.toggle("active", isChat);
+      tabCode.classList.toggle("active", !isChat);
+      tabChat.setAttribute("aria-selected", isChat ? "true" : "false");
+      tabCode.setAttribute("aria-selected", !isChat ? "true" : "false");
+    }
+    tabChat.addEventListener("click", function () { showPage("chat"); });
+    tabCode.addEventListener("click", function () { showPage("code"); });
+  })();
+
+  (function initCodeReview() {
+    var modeEl = document.getElementById("codeReviewMode");
+    var pathRow = document.getElementById("codeReviewPathRow");
+    var commitsRow = document.getElementById("codeReviewCommitsRow");
+    var pathEl = document.getElementById("codeReviewPath");
+    var commitsEl = document.getElementById("codeReviewCommits");
+    var providerEl = document.getElementById("codeReviewProvider");
+    var runBtn = document.getElementById("codeReviewRunBtn");
+    var logsEl = document.getElementById("codeReviewLogs");
+    var reportEl = document.getElementById("codeReviewReport");
+    var statusEl = document.getElementById("codeReviewStatus");
+    var codeReviewListEl = document.getElementById("codeReviewList");
+    var codeReviewLoadingEl = document.getElementById("codeReviewLoading");
+    if (!runBtn || !reportEl) return;
+
+    var recentCodeReviews = [];
+    var activeCodeReviewId = null;
+
+    function formatRelativeTime(isoDate) {
+      if (!isoDate) return "";
+      var d = new Date(isoDate);
+      var now = new Date();
+      var diffMs = now - d;
+      var diffM = Math.floor(diffMs / 60000);
+      var diffH = Math.floor(diffMs / 3600000);
+      var diffD = Math.floor(diffMs / 86400000);
+      if (diffM < 1) return "刚刚";
+      if (diffM < 60) return diffM + " 分钟前";
+      if (diffH < 24) return diffH + " 小时前";
+      if (diffD < 7) return diffD + " 天前";
+      return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+    }
+
+    async function loadCodeReviews() {
+      if (!codeReviewListEl) return;
+      if (codeReviewLoadingEl) codeReviewLoadingEl.classList.add("hidden");
+      try {
+        var r = await fetch("/code-reviews?limit=50");
+        if (!r.ok) return;
+        recentCodeReviews = await r.json();
+        renderCodeReviewList();
+      } catch (e) {
+        if (codeReviewListEl) codeReviewListEl.innerHTML = "<li class=\"conversation-empty\">加载失败</li>";
+      }
+    }
+
+    function setActiveInCodeReviewList(id) {
+      activeCodeReviewId = id;
+      if (!codeReviewListEl) return;
+      codeReviewListEl.querySelectorAll("li.conversation-item").forEach(function (li) {
+        li.classList.toggle("active", li.dataset.reviewId === id);
+      });
+    }
+
+    function renderCodeReviewList() {
+      if (!codeReviewListEl) return;
+      codeReviewListEl.innerHTML = "";
+      if (recentCodeReviews.length === 0) {
+        var li = document.createElement("li");
+        li.className = "conversation-empty";
+        li.textContent = "暂无记录";
+        codeReviewListEl.appendChild(li);
+        return;
+      }
+      recentCodeReviews.forEach(function (s) {
+        var li = document.createElement("li");
+        li.className = "conversation-item";
+        li.dataset.reviewId = s.id;
+        if (activeCodeReviewId && s.id === activeCodeReviewId) li.classList.add("active");
+        var left = document.createElement("div");
+        left.className = "conversation-item-left";
+        var titleEl = document.createElement("span");
+        titleEl.className = "conversation-preview-title";
+        titleEl.textContent = s.title || s.mode + " · " + s.provider;
+        left.appendChild(titleEl);
+        var timeEl = document.createElement("span");
+        timeEl.className = "conversation-time";
+        timeEl.textContent = formatRelativeTime(s.created_at);
+        left.appendChild(timeEl);
+        var deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.className = "conversation-delete";
+        deleteBtn.setAttribute("aria-label", "删除");
+        deleteBtn.textContent = "×";
+        deleteBtn.title = "删除此记录";
+        deleteBtn.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          deleteCodeReview(s.id);
+        });
+        li.appendChild(left);
+        li.appendChild(deleteBtn);
+        li.addEventListener("click", function () { loadCodeReview(s.id); });
+        codeReviewListEl.appendChild(li);
+      });
+    }
+
+    async function loadCodeReview(id) {
+      if (activeCodeReviewId === id) return;
+      try {
+        var r = await fetch("/code-reviews/" + encodeURIComponent(id));
+        if (!r.ok) throw new Error("Failed to load");
+        var data = await r.json();
+        activeCodeReviewId = id;
+        setActiveInCodeReviewList(id);
+        if (reportEl) reportEl.innerHTML = data.report ? renderMarkdown(data.report) : "";
+        if (statusEl) statusEl.textContent = "共 " + (data.files_included || 0) + " 个文件，Provider: " + (data.provider || "");
+        reportEl.scrollTop = reportEl.scrollHeight;
+        var tabCode = document.getElementById("tabCode");
+        if (tabCode) tabCode.click();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function deleteCodeReview(id) {
+      if (!id) return;
+      if (!window.confirm("确定删除该 Review 记录？")) return;
+      try {
+        var r = await fetch("/code-reviews/" + encodeURIComponent(id), { method: "DELETE" });
+        if (!r.ok) throw new Error(await r.text());
+        var wasActive = activeCodeReviewId === id;
+        await loadCodeReviews();
+        if (wasActive) {
+          activeCodeReviewId = null;
+          if (reportEl) reportEl.innerHTML = "";
+          if (statusEl) statusEl.textContent = "";
+        }
+      } catch (e) {
+        window.alert("删除失败: " + e.message);
+      }
+    }
+
+    var pathErrorEl = document.getElementById("codeReviewPathError");
+    var gitErrorEl = document.getElementById("codeReviewGitError");
+
+    function showPathError(show) {
+      if (pathErrorEl) {
+        pathErrorEl.classList.toggle("hidden", !show);
+      }
+    }
+    function showGitError(msg) {
+      if (gitErrorEl) {
+        gitErrorEl.textContent = msg || "";
+        gitErrorEl.classList.toggle("hidden", !msg);
+      }
+    }
+
+    function toggleCodeReviewMode() {
+      var mode = (modeEl && modeEl.value) || "path";
+      if (pathRow) pathRow.classList.remove("hidden");
+      if (commitsRow) commitsRow.classList.toggle("hidden", mode !== "git");
+      showGitError("");
+    }
+    if (modeEl) modeEl.addEventListener("change", toggleCodeReviewMode);
+    toggleCodeReviewMode();
+    if (pathEl) pathEl.addEventListener("input", function () { showPathError(false); });
+
+    runBtn.addEventListener("click", function () {
+      var mode = (modeEl && modeEl.value) || "path";
+      var path = (pathEl && pathEl.value.trim()) || "";
+      var provider = (providerEl && providerEl.value) || "claude";
+
+      showPathError(false);
+      showGitError("");
+
+      if (!path) {
+        showPathError(true);
+        return;
+      }
+
+      var body = { path: path, provider: provider };
+      if (mode === "git") {
+        var raw = commitsEl ? commitsEl.value.trim() : "";
+        if (!raw) {
+          showGitError("请填写 commit 列表");
+          return;
+        }
+        var commits = raw.split(/[\s\n]+/).filter(function (s) { return s.length > 0; });
+        if (!commits.length) {
+          showGitError("请填写至少一个 commit");
+          return;
+        }
+        fetch("/code-review/validate-commits", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ commits: commits }),
+        }).then(function (r) { return r.json(); }).then(function (data) {
+          if (data.valid) {
+            body.commits = commits;
+            startCodeReviewRun(body, mode, path, provider, commits, mode === "uncommitted");
+          } else {
+            showGitError(data.error || "校验未通过");
+          }
+        }).catch(function (e) {
+          showGitError("校验请求失败: " + (e.message || ""));
+        });
+        return;
+      }
+
+      if (mode === "uncommitted") body.uncommitted_only = true;
+      startCodeReviewRun(body, mode, path, provider, body.commits || null, body.uncommitted_only || false);
+    });
+
+    function startCodeReviewRun(body, mode, path, provider, commits, uncommitted_only) {
+      var saveParams = { mode: mode, path: path, commits: commits, uncommitted_only: uncommitted_only, provider: provider };
+      if (logsEl) logsEl.textContent = "";
+      reportEl.innerHTML = "";
+      if (statusEl) statusEl.textContent = "运行中…";
+      runBtn.disabled = true;
+      fetch("/code-review/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then(function (r) {
+        if (!r.ok) {
+          runBtn.disabled = false;
+          return r.json().then(function (d) { throw new Error(d.detail || r.statusText); });
+        }
+        var reader = r.body.getReader();
+        var dec = new TextDecoder();
+        var buf = "";
+        function processLine(line) {
+          if (!line || line.indexOf("data: ") !== 0) return;
+          var payload = line.slice(6);
+          try {
+            var data = JSON.parse(payload);
+            if (data.type === "log") {
+              if (logsEl) {
+                logsEl.textContent += (data.message || "") + "\n";
+                logsEl.scrollTop = logsEl.scrollHeight;
+              }
+            } else if (data.type === "report") {
+              if (data.report) reportEl.innerHTML = renderMarkdown(data.report);
+              if (statusEl) statusEl.textContent = "完成。共 " + (data.files_included || 0) + " 个文件，Provider: " + (data.provider || "");
+              reportEl.scrollTop = reportEl.scrollHeight;
+              fetch("/code-reviews", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  mode: saveParams.mode,
+                  path: saveParams.path,
+                  commits: saveParams.commits,
+                  uncommitted_only: saveParams.uncommitted_only,
+                  provider: data.provider || saveParams.provider,
+                  report: data.report || "",
+                  files_included: data.files_included || 0,
+                }),
+              }).then(function (rr) {
+                if (rr.ok) return rr.json();
+              }).then(function (created) {
+                if (created) {
+                  loadCodeReviews().then(function () { setActiveInCodeReviewList(created.id); });
+                }
+              }).catch(function () {});
+            } else if (data.type === "error") {
+              reportEl.innerHTML = "<p class=\"error\">Error: " + (data.message ? data.message.replace(/</g, "&lt;") : "") + "</p>";
+              if (statusEl) statusEl.textContent = "";
+            }
+          } catch (_) {}
+        }
+        function readMore() {
+          reader.read().then(function (chunk) {
+            if (chunk.done) {
+              runBtn.disabled = false;
+              return;
+            }
+            buf += dec.decode(chunk.value, { stream: true });
+            var parts = buf.split("\n\n");
+            buf = parts.pop() || "";
+            for (var i = 0; i < parts.length; i++) {
+              var line = parts[i].split("\n").find(function (l) { return l.indexOf("data: ") === 0; });
+              if (line) processLine(line);
+            }
+            readMore();
+          }).catch(function (e) {
+            reportEl.innerHTML = "<p class=\"error\">Error: " + (e.message ? e.message.replace(/</g, "&lt;") : "") + "</p>";
+            if (statusEl) statusEl.textContent = "";
+            runBtn.disabled = false;
+          });
+        }
+        readMore();
+      }).catch(function (e) {
+        reportEl.innerHTML = "<p class=\"error\">Error: " + (e.message ? e.message.replace(/</g, "&lt;") : "") + "</p>";
+        if (statusEl) statusEl.textContent = "";
+        runBtn.disabled = false;
+      });
+    }
+
+    loadCodeReviews();
+    var tabCode = document.getElementById("tabCode");
+    if (tabCode) tabCode.addEventListener("click", function () { loadCodeReviews(); });
+  })();
+
   var newGroupBtn = document.getElementById("newGroupBtn");
   if (newGroupBtn) {
     newGroupBtn.addEventListener("click", function () {

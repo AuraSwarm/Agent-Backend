@@ -32,6 +32,17 @@ chat_providers:
       - qwen2.5-coder-32b-instruct
 default_chat_provider: "dashscope"
 
+# Local tools (GET /tools, POST /tools/execute). Command list; {key} substituted from params.
+local_tools:
+  - id: echo
+    name: Echo
+    description: Print a message to stdout
+    command: ["echo", "{message}"]
+  - id: date
+    name: Date
+    description: Print current date
+    command: ["date"]
+
 summary_strategies:
   context_compression_v2:
     model: "qwen3-max"  # default for compress/summary mode
