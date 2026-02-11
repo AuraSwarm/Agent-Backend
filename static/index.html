@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Backend – Chat</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="layout-root" class="layout-root">
+  <aside class="sidebar" id="sidebar">
+    <button type="button" class="btn btn-new-chat" id="newChatBtn">新对话</button>
+    <div class="sidebar-section sidebar-groups">
+      <h2 class="sidebar-heading">对话分组</h2>
+      <button type="button" class="btn btn-new-group" id="newGroupBtn" title="新建分组">+ 新分组</button>
+      <ul class="group-list" id="groupList">
+        <li class="group-item active" data-group="all">全部</li>
+      </ul>
+    </div>
+    <div class="sidebar-section sidebar-conversations">
+      <h2 class="sidebar-heading">最近对话</h2>
+      <div class="conversation-list-scroll" id="conversationListScroll">
+        <ul class="conversation-list" id="conversationList">
+          <li class="conversation-loading" id="conversationLoading">加载中…</li>
+        </ul>
+      </div>
+    </div>
+  </aside>
+
+  <div class="app-main">
+    <header>
+      <select class="model-select" id="modelSelect" aria-label="Model">
+        <option value="">Loading models…</option>
+      </select>
+      <button type="button" class="btn btn-outline" id="attachFilesBtn">Attach files</button>
+      <input type="file" id="fileInput" multiple accept="*" style="display:none" />
+      <button type="button" class="btn btn-outline" id="attachFolderBtn">Attach folder</button>
+      <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none" />
+    </header>
+
+    <main id="messages" role="log" aria-live="polite">
+      <div class="empty-state" id="emptyState">
+        <p>选择模型并开始新对话，或从左侧恢复历史对话。</p>
+        <p>可附加文件或文件夹作为上下文。</p>
+      </div>
+    </main>
+
+    <footer>
+      <div class="footer-inner">
+        <div class="attached-files" id="attachedFiles"></div>
+        <div class="input-row">
+          <textarea id="input" placeholder="输入消息…（Shift+Enter 换行）" rows="1"></textarea>
+          <div class="input-actions">
+            <label class="input-option deep-thinking-option" title="开启后要求模型分步骤推理、逻辑严谨、输出更详细">
+              <input type="checkbox" id="deepThinkingCheckbox" />
+              <span>深度思考</span>
+            </label>
+            <label class="input-option deep-research-option" title="开启后以研究员模式深度分析：背景、因素、方案、优缺点、结论">
+              <input type="checkbox" id="deepResearchCheckbox" />
+              <span>深度研究</span>
+            </label>
+            <button type="button" class="btn-newline" id="newlineBtn" title="换行（Shift+Enter）">换行</button>
+            <button type="button" class="btn-stop" id="stopBtn" style="display:none" title="中断当前输出">停止</button>
+            <button type="button" class="btn-send" id="sendBtn" disabled title="发送（Enter）">发送</button>
+          </div>
+        </div>
+        <p class="input-hint">Shift+Enter 换行，Enter 发送；「深度思考」分步骤推理，「深度研究」研究员式深度分析</p>
+      </div>
+    </footer>
+  </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/lib/marked.umd.js" crossorigin="anonymous"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

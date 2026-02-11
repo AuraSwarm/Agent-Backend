@@ -1,0 +1,38 @@
+# Application settings. Copy to app.yaml and set values. Do not commit app.yaml with secrets.
+# Use ${VAR} in values to substitute from environment.
+
+# Server
+host: "0.0.0.0"
+port: 8000
+
+# Database (asyncpg URL). Local mode: use localhost:5432 so ./run local can wait and optionally start Postgres.
+database_url: "postgresql+asyncpg://postgres:postgres@localhost:5432/agent_backend"
+
+# Redis (Celery broker)
+redis_url: "redis://localhost:6379/0"
+
+# MinIO (archives)
+minio_endpoint: "localhost:9000"
+minio_access_key: "minioadmin"
+minio_secret_key: "minioadmin"
+minio_bucket: "archives"
+
+# Directory containing models.yaml (embedding/chat providers, summary strategies)
+config_dir: "config"
+
+# API key for DashScope (Qwen). Set here or use ${DASHSCOPE_API_KEY} to read from environment.
+# dashscope_api_key: "sk-xxx"
+# dashscope_api_key: "${DASHSCOPE_API_KEY}"
+
+# If dashscope_api_key is not set above, these env vars are required at startup
+required_env_vars:
+  - DASHSCOPE_API_KEY
+
+# Path to shell script to source for API keys (e.g. ~/.ai_env.sh). Omit or leave unset to use ~/.ai_env.sh; set to "" to disable.
+# ai_env_path: "~/.ai_env.sh"
+
+# Options for ./run (local run). Env vars SKIP_DB_WAIT, NO_DB_PASSWORD, USE_LOCAL_POSTGRES, DEV override these.
+# skip_db_wait: false   # Skip waiting for PostgreSQL at startup
+# no_db_password: false # Use Postgres with no password (trust auth) on localhost:5432
+# use_local_postgres: false # Use project-local Postgres on port 5433
+# dev: false            # Run server with --reload

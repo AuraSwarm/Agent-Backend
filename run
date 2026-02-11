@@ -1,0 +1,457 @@
+#!/usr/bin/env bash
+# Single entry script for agent-backend: run server (with DB), configure, or Docker.
+#
+# Commands:
+#   ./run                      - Run backend (default: node mode); start DB if needed, then serve
+#   ./run configure            - Create config/app.yaml and config/models.yaml from examples if missing
+#   ./run help                 - Show usage and startup flow / options
+#   ./run node | run [default] - Run on a Docker node; start DB if needed, then backend
+#   ./run local                - Run on a real local machine; same as node (start DB if needed, then backend)
+#   ./run restart [node|local] - Stop backend and re-run node or local; no args = node
+#   ./run docker | start       - Docker: start service(s); default all (docker compose up -d)
+#   ./run stop [SERVICE...]    - Docker: stop service(s); default all
+#   ./run restart [SERVICE...] - Docker: restart service(s) when SERVICE given (e.g. backend)
+#
+# Startup flow (./run node | ./run local):
+#   1. Load config from config/app.yaml (database_url, host, port, etc.).
+#   2. If database_url is localhost/127.0.0.1:5432, try to start PostgreSQL (systemctl, pg_ctl,
+#      project-local .local/postgres-data, or Docker postgres). Then wait until the port is open.
+#   3. Run alembic upgrade head if alembic.ini exists.
+#   4. Start agent-backend serve (host/port from config).
+#
+# Options (env or config/app.yaml):
+#   SKIP_DB_WAIT=1 / skip_db_wait: true  - Do not wait for PostgreSQL; start backend immediately.
+#      Use when Postgres is already running (e.g. started by systemd or another process).
+#   USE_LOCAL_POSTGRES=1 / use_local_postgres: true - Use project-local Postgres on port 5433
+#      (.local/postgres-data-5433); no system password. Requires initdb/pg_ctl (and often non-root).
+#   NO_DB_PASSWORD=1 / no_db_password: true - Connect to postgres@127.0.0.1:5432 with no password
+#      (trust auth). Requires server configured for trust on localhost.
+#
+# Set CONFIG_DIR to use a different config directory. For other commands use: agent-backend --help
+
+set -e
+
+# Run from script directory (project root) so config/ and paths work from any cwd
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+CMD="${1:-run}"
+shift || true
+
+# Normalize: run -> node, start -> docker; local stays local
+case "$CMD" in
+  run)   CMD=node ;;
+  start) CMD=docker ;;
+esac
+
+# --- restart (node/local): stop backend then re-run node or local ---
+if [ "$CMD" = "restart" ]; then
+  if [ $# -eq 0 ] || [ "$1" = "node" ] || [ "$1" = "local" ]; then
+    NEXT="${1:-node}"
+    echo "[restart] Stopping any running agent-backend..."
+    pkill -f "agent-backend serve" 2>/dev/null || true
+    pkill -f "run node" 2>/dev/null || true
+    pkill -f "run local" 2>/dev/null || true
+    sleep 1
+    exec "$0" "$NEXT"
+  fi
+fi
+
+# --- configure: generate config/app.yaml and config/models.yaml from examples if missing ---
+if [ "$CMD" = "configure" ] || [ "$CMD" = "config" ]; then
+  CREATED=""
+  if [ ! -f "config/app.yaml" ] && [ -f "config/app.yaml.example" ]; then
+    cp "config/app.yaml.example" "config/app.yaml"
+    CREATED="config/app.yaml"
+  elif [ -f "config/app.yaml" ]; then
+    echo "config/app.yaml already exists."
+  fi
+  if [ ! -f "config/models.yaml" ] && [ -f "config/models.yaml.example" ]; then
+    cp "config/models.yaml.example" "config/models.yaml"
+    [ -n "$CREATED" ] && CREATED="$CREATED, config/models.yaml" || CREATED="config/models.yaml"
+  elif [ -f "config/models.yaml" ]; then
+    echo "config/models.yaml already exists."
+  fi
+  if [ -n "$CREATED" ]; then
+    echo "Created: $CREATED. Edit config/app.yaml (and optionally models.yaml) and set your values."
+  fi
+  exit 0
+fi
+
+# --- help: usage and startup notes ---
+if [ "$CMD" = "help" ] || [ "$CMD" = "-h" ] || [ "$CMD" = "--help" ]; then
+  echo "Usage: $0 [configure|help|node|local|docker|stop|restart] [SERVICE...]"
+  echo ""
+  echo "  configure        - Create config/app.yaml and config/models.yaml from examples if missing"
+  echo "  help             - This message (usage and startup flow)"
+  echo "  node | run       - Run backend (default); start DB if needed, then serve"
+  echo "  local            - Same as node (start DB if needed, then backend)"
+  echo "  restart [node|local] - Stop backend and re-run node (or local)"
+  echo "  docker | start   - Docker: start all or named service(s) (docker compose up -d)"
+  echo "  stop [SERVICE]   - Docker: stop all or named service(s)"
+  echo "  restart [SERVICE] - Docker: restart service(s) (e.g. backend)"
+  echo ""
+  echo "Startup flow (node/local): load config -> start/wait for PostgreSQL (if localhost:5432) -> alembic up -> agent-backend serve"
+  echo ""
+  echo "Options (env or config skip_db_wait / use_local_postgres / no_db_password):"
+  echo "  SKIP_DB_WAIT=1       - Do not wait for DB; start backend immediately (use when Postgres already running)."
+  echo "  USE_LOCAL_POSTGRES=1 - Use project-local Postgres on port 5433 (.local/postgres-data-5433)."
+  echo "  NO_DB_PASSWORD=1     - Connect to postgres@127.0.0.1:5432 with no password (trust auth)."
+  echo ""
+  echo "  In config/app.yaml: skip_db_wait: true | use_local_postgres: true | no_db_password: true"
+  exit 0
+fi
+
+# --- Docker: docker | stop | restart [service...] ---
+if [ "$CMD" = "docker" ] || [ "$CMD" = "stop" ] || [ "$CMD" = "restart" ]; then
+  if ! command -v docker-compose >/dev/null 2>&1 && ! command -v docker >/dev/null 2>&1; then
+    echo "Docker not found. Use './run node' or './run local' to run the backend." >&2
+    exit 1
+  fi
+  COMPOSE="docker-compose"
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    COMPOSE="docker compose"
+  fi
+  if [ $# -eq 0 ]; then
+    case "$CMD" in
+      docker) $COMPOSE up -d ;;
+      stop)   $COMPOSE stop ;;
+      restart) $COMPOSE restart ;;
+    esac
+  else
+    case "$CMD" in
+      docker) $COMPOSE up -d "$@" ;;
+      stop)   $COMPOSE stop "$@" ;;
+      restart) $COMPOSE restart "$@" ;;
+    esac
+  fi
+  exit 0
+fi
+
+# --- Node or local run (start DB if needed, then backend) ---
+if [ "$CMD" != "node" ] && [ "$CMD" != "local" ]; then
+  echo "[init] Unknown command: $CMD" >&2
+  echo "Usage: $0 [configure|help|node|local|docker|stop|restart] [SERVICE...]" >&2
+  echo "  Run $0 help for usage and startup flow / options." >&2
+  echo "  For serve, test, init-db, health, etc. use: agent-backend --help" >&2
+  exit 1
+fi
+
+# Load DATABASE_URL and run options from config (CONFIG_DIR/app.yaml). Env vars override config.
+echo "[init] mode=$CMD"
+export CONFIG_DIR="${CONFIG_DIR:-config}"
+if [ -f "${CONFIG_DIR}/app.yaml" ]; then
+  echo "[init] Loading config from ${CONFIG_DIR}/app.yaml"
+  eval "$(python -c "
+import os, sys
+sys.path.insert(0, os.getcwd())
+os.environ.setdefault('CONFIG_DIR', 'config')
+from app.config.loader import get_app_settings
+s = get_app_settings()
+print('export DATABASE_URL=%s' % repr(s.database_url))
+if s.ai_env_path is None:
+  ai = os.path.expanduser('~/.ai_env.sh')
+elif s.ai_env_path == '':
+  ai = ''
+else:
+  ai = os.path.expanduser(s.ai_env_path)
+print('export CONFIG_AI_ENV_PATH=%s' % repr(ai))
+print('export CONFIG_SKIP_DB_WAIT=%s' % ('1' if s.skip_db_wait else '0'))
+print('export CONFIG_NO_DB_PASSWORD=%s' % ('1' if s.no_db_password else '0'))
+print('export CONFIG_USE_LOCAL_POSTGRES=%s' % ('1' if s.use_local_postgres else '0'))
+print('export CONFIG_DEV=%s' % ('1' if s.dev else '0'))
+" 2>/dev/null)" || true
+fi
+# Env overrides config; config overrides script defaults (when app.yaml is loaded)
+SKIP_DB_WAIT="${SKIP_DB_WAIT:-${CONFIG_SKIP_DB_WAIT:-0}}"
+NO_DB_PASSWORD="${NO_DB_PASSWORD:-${CONFIG_NO_DB_PASSWORD:-0}}"
+USE_LOCAL_POSTGRES="${USE_LOCAL_POSTGRES:-${CONFIG_USE_LOCAL_POSTGRES:-0}}"
+DEV="${DEV:-${CONFIG_DEV:-0}}"
+AI_ENV_PATH="${AI_ENV_PATH:-${CONFIG_AI_ENV_PATH:-$HOME/.ai_env.sh}}"
+if [ -z "$DATABASE_URL" ]; then
+  DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/agent_backend"
+  echo "[init] Using default DATABASE_URL (localhost:5432)"
+fi
+# Load ai_env script if present (API keys when not in app.yaml)
+if [ -n "$AI_ENV_PATH" ] && [ -f "$AI_ENV_PATH" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$AI_ENV_PATH"
+  set +a
+  if [ -n "$QWEN_API_KEY" ] && [ -z "$DASHSCOPE_API_KEY" ]; then
+    export DASHSCOPE_API_KEY="$QWEN_API_KEY"
+  fi
+fi
+
+DB_URL="$DATABASE_URL"
+DB_HOST=$(echo "$DB_URL" | sed -n 's|.*@\([^:/]*\).*|\1|p')
+DB_PORT=$(echo "$DB_URL" | sed -n 's|.*:\([0-9]*\)/.*|\1|p')
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-5432}"
+export DB_HOST DB_PORT
+
+# Use project-local Postgres on port 5433 (no system password). Requires initdb/pg_ctl and non-root user.
+if [ "${USE_LOCAL_POSTGRES}" = "1" ]; then
+  echo "[init] USE_LOCAL_POSTGRES=1: starting project-local Postgres on port 5433 (no password)."
+  for d in /usr/lib/postgresql/16/bin /usr/lib/postgresql/15/bin /usr/lib/postgresql/14/bin /usr/local/pgsql/bin; do
+    [ -x "$d/initdb" ] && [ -x "$d/pg_ctl" ] && export PATH="$d:$PATH" && break
+  done
+  if ! command -v initdb >/dev/null 2>&1 || ! command -v pg_ctl >/dev/null 2>&1; then
+    echo "[init] initdb/pg_ctl not found. Install postgresql or use NO_DB_PASSWORD=1 (see below)." >&2
+    exit 1
+  fi
+  LOCAL_PGDATA="$ROOT/.local/postgres-data-5433"
+  if [ ! -f "$LOCAL_PGDATA/postgresql.conf" ]; then
+    mkdir -p "$(dirname "$LOCAL_PGDATA")"
+    LANG=C LC_ALL=C initdb -D "$LOCAL_PGDATA" 2>/dev/null || {
+      echo "[init] initdb failed (often 'cannot be run as root'). Use NO_DB_PASSWORD=1 ./run node to try trust auth, or run as non-root." >&2
+      exit 1
+    }
+    echo "port = 5433" >> "$LOCAL_PGDATA/postgresql.conf"
+    echo "listen_addresses = 'localhost'" >> "$LOCAL_PGDATA/postgresql.conf"
+    for line in "host all all 127.0.0.1/32 trust" "host all all ::1/128 trust"; do
+      grep -q "$line" "$LOCAL_PGDATA/pg_hba.conf" || \
+        printf '%s\n%s\n' "$line" "$(cat "$LOCAL_PGDATA/pg_hba.conf")" > "$LOCAL_PGDATA/pg_hba.conf.new" && mv "$LOCAL_PGDATA/pg_hba.conf.new" "$LOCAL_PGDATA/pg_hba.conf"
+    done
+  fi
+  [ -f "$LOCAL_PGDATA/pg_hba.conf" ] && for line in "host all all 127.0.0.1/32 trust" "host all all ::1/128 trust"; do
+    grep -q "$line" "$LOCAL_PGDATA/pg_hba.conf" || \
+      printf '%s\n%s\n' "$line" "$(cat "$LOCAL_PGDATA/pg_hba.conf")" > "$LOCAL_PGDATA/pg_hba.conf.new" && mv "$LOCAL_PGDATA/pg_hba.conf.new" "$LOCAL_PGDATA/pg_hba.conf"
+  done
+  [ -f "$LOCAL_PGDATA/postmaster.pid" ] && pg_ctl -D "$LOCAL_PGDATA" reload 2>/dev/null || true
+  if [ ! -f "$LOCAL_PGDATA/postmaster.pid" ]; then
+    pg_ctl -D "$LOCAL_PGDATA" -l "$LOCAL_PGDATA/log" start 2>/dev/null || true
+    sleep 2
+  fi
+  PGPASSWORD= psql -h 127.0.0.1 -p 5433 -d postgres -tA -c "SELECT 1 FROM pg_roles WHERE rolname='postgres'" 2>/dev/null | grep -q 1 || \
+    PGPASSWORD= psql -h 127.0.0.1 -p 5433 -d postgres -c "CREATE ROLE postgres WITH LOGIN PASSWORD 'postgres' SUPERUSER;" 2>/dev/null || true
+  PGPASSWORD= psql -h 127.0.0.1 -p 5433 -d postgres -tA -c "SELECT 1 FROM pg_database WHERE datname='agent_backend'" 2>/dev/null | grep -q 1 || \
+    PGPASSWORD= psql -h 127.0.0.1 -p 5433 -d postgres -c "CREATE DATABASE agent_backend OWNER postgres;" 2>/dev/null || true
+  export DATABASE_URL="postgresql+asyncpg://postgres:postgres@127.0.0.1:5433/agent_backend"
+  echo "[init] Project-local Postgres ready at 127.0.0.1:5433."
+  SKIP_DB_WAIT=1
+fi
+
+# Try system Postgres with no password (trust auth). Use when you have no password and server allows trust for localhost.
+if [ "${NO_DB_PASSWORD}" = "1" ]; then
+  echo "[init] NO_DB_PASSWORD=1: using postgres@127.0.0.1:5432 (no password; requires server trust auth)."
+  export DATABASE_URL="postgresql+asyncpg://postgres@127.0.0.1:5432/agent_backend"
+  PGPASSWORD= psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -tA -c "SELECT 1 FROM pg_database WHERE datname='agent_backend';" 2>/dev/null | grep -q 1 || \
+    PGPASSWORD= psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "CREATE DATABASE agent_backend;" 2>/dev/null || true
+  SKIP_DB_WAIT=1
+fi
+
+if [ "${SKIP_DB_WAIT}" = "1" ]; then
+  echo "[init] Skipping PostgreSQL wait (SKIP_DB_WAIT=1 or config skip_db_wait=true)."
+else
+  # Ensure PostgreSQL binaries (initdb, pg_ctl) are on PATH if installed in common locations
+  for d in /usr/lib/postgresql/16/bin /usr/lib/postgresql/15/bin /usr/lib/postgresql/14/bin /usr/local/pgsql/bin; do
+    [ -x "$d/initdb" ] && [ -x "$d/pg_ctl" ] && export PATH="$d:$PATH" && break
+  done
+  # Local mode: if DB is localhost:5432, try several ways to start Postgres (systemctl may not be allowed)
+  _try_start_postgres_system() {
+    case "$DB_HOST" in
+      localhost|127.0.0.1) ;;
+      *) return 0 ;;
+    esac
+    [ "$DB_PORT" = "5432" ] || return 0
+    # Skip system postgres when in a container so we don't bind 5432 and block project-local/container postgres
+    [ -f /.dockerenv ] && return 0
+    [ -n "$container" ] && return 0
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl start postgresql 2>/dev/null || true
+      systemctl start postgres 2>/dev/null || true
+      systemctl start postgresql@16 2>/dev/null || true
+      systemctl start postgresql@15 2>/dev/null || true
+    fi
+    if command -v brew >/dev/null 2>&1; then
+      brew services start postgresql 2>/dev/null || true
+      brew services start postgresql@16 2>/dev/null || true
+      brew services start postgresql@15 2>/dev/null || true
+    fi
+    if command -v service >/dev/null 2>&1; then
+      service postgresql start 2>/dev/null || true
+      service postgres start 2>/dev/null || true
+    fi
+  }
+  _try_start_postgres_pg_ctl() {
+    case "$DB_HOST" in
+      localhost|127.0.0.1) ;;
+      *) return 0 ;;
+    esac
+    [ "$DB_PORT" = "5432" ] || return 0
+    command -v pg_ctl >/dev/null 2>&1 || return 0
+    for dir in "${PGDATA:-}" /usr/local/var/postgres /opt/homebrew/var/postgres /usr/local/var/postgresql@*/data /var/lib/postgresql/*/main; do
+      [ -z "$dir" ] && continue
+      [ -d "$dir" ] || continue
+      [ -f "$dir/postgresql.conf" ] || [ -f "$dir/postmaster.pid" ] || continue
+      pg_ctl -D "$dir" start 2>/dev/null && return 0 || true
+    done
+  }
+  # Project-local Postgres: initdb + pg_ctl in .local/postgres-data (no systemctl or Docker needed)
+  _try_start_postgres_local_dir() {
+    case "$DB_HOST" in
+      localhost|127.0.0.1) ;;
+      *) return 0 ;;
+    esac
+    [ "$DB_PORT" = "5432" ] || return 0
+    command -v initdb >/dev/null 2>&1 || return 0
+    command -v pg_ctl >/dev/null 2>&1 || return 0
+    LOCAL_PGDATA="${LOCAL_PGDATA:-$ROOT/.local/postgres-data}"
+    if [ ! -f "$LOCAL_PGDATA/postgresql.conf" ]; then
+      mkdir -p "$(dirname "$LOCAL_PGDATA")"
+      initdb -D "$LOCAL_PGDATA" 2>/dev/null || return 0
+      if [ -f "$LOCAL_PGDATA/postgresql.conf" ]; then
+        echo "port = 5432" >> "$LOCAL_PGDATA/postgresql.conf"
+        echo "listen_addresses = 'localhost'" >> "$LOCAL_PGDATA/postgresql.conf"
+      fi
+      # Allow local TCP (trust) so we can connect to create postgres role and db; first match wins
+      if [ -f "$LOCAL_PGDATA/pg_hba.conf" ]; then
+        for line in "host all all 127.0.0.1/32 trust" "host all all ::1/128 trust"; do
+          grep -q "$line" "$LOCAL_PGDATA/pg_hba.conf" || \
+            printf '%s\n%s\n' "$line" "$(cat "$LOCAL_PGDATA/pg_hba.conf")" > "$LOCAL_PGDATA/pg_hba.conf.new" && mv "$LOCAL_PGDATA/pg_hba.conf.new" "$LOCAL_PGDATA/pg_hba.conf"
+        done
+      fi
+    fi
+    # Ensure trust lines exist (for IPv6 localhost) and reload if cluster already running
+    if [ -f "$LOCAL_PGDATA/pg_hba.conf" ]; then
+      for line in "host all all 127.0.0.1/32 trust" "host all all ::1/128 trust"; do
+        grep -q "$line" "$LOCAL_PGDATA/pg_hba.conf" || \
+          printf '%s\n%s\n' "$line" "$(cat "$LOCAL_PGDATA/pg_hba.conf")" > "$LOCAL_PGDATA/pg_hba.conf.new" && mv "$LOCAL_PGDATA/pg_hba.conf.new" "$LOCAL_PGDATA/pg_hba.conf"
+      done
+      [ -f "$LOCAL_PGDATA/postmaster.pid" ] && pg_ctl -D "$LOCAL_PGDATA" reload 2>/dev/null || true
+    fi
+    if [ ! -f "$LOCAL_PGDATA/postmaster.pid" ]; then
+      pg_ctl -D "$LOCAL_PGDATA" -l "$LOCAL_PGDATA/log" start 2>/dev/null || true
+      sleep 2
+      # Create postgres user and agent_backend db so app's database_url works
+      (PGPASSWORD= psql -h 127.0.0.1 -p 5432 -d postgres -tA -c "SELECT 1 FROM pg_roles WHERE rolname='postgres'" 2>/dev/null) | grep -q 1 || \
+        PGPASSWORD= psql -h 127.0.0.1 -p 5432 -d postgres -c "CREATE ROLE postgres WITH LOGIN PASSWORD 'postgres' SUPERUSER;" 2>/dev/null || true
+      PGPASSWORD= psql -h 127.0.0.1 -p 5432 -d postgres -tA -c "SELECT 1 FROM pg_database WHERE datname='agent_backend'" 2>/dev/null | grep -q 1 || \
+        PGPASSWORD= psql -h 127.0.0.1 -p 5432 -d postgres -c "CREATE DATABASE agent_backend OWNER postgres;" 2>/dev/null || true
+    fi
+  }
+  _try_start_postgres_docker() {
+    case "$DB_HOST" in
+      localhost|127.0.0.1) ;;
+      *) return 0 ;;
+    esac
+    [ "$DB_PORT" = "5432" ] || return 0
+    if [ ! -f "docker-compose.yml" ] && [ ! -f "compose.yaml" ]; then
+      return 0
+    fi
+    if command -v docker >/dev/null 2>&1; then
+      if docker compose version >/dev/null 2>&1; then
+        docker compose up -d postgres 2>/dev/null || true
+      elif command -v docker-compose >/dev/null 2>&1; then
+        docker-compose up -d postgres 2>/dev/null || true
+      fi
+    elif command -v podman >/dev/null 2>&1; then
+      if podman compose version >/dev/null 2>&1; then
+        podman compose up -d postgres 2>/dev/null || true
+      elif command -v podman-compose >/dev/null 2>&1; then
+        podman-compose up -d postgres 2>/dev/null || true
+      else
+        # Fallback: run postgres container directly (same as docker-compose postgres service)
+        if ! podman ps -q -f name=agent-backend-postgres 2>/dev/null | grep -q .; then
+          podman run -d --name agent-backend-postgres \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=agent_backend \
+            -p 5432:5432 \
+            docker.io/pgvector/pgvector:pg16 2>/dev/null || true
+        fi
+      fi
+    fi
+  }
+  _db_ready() {
+    if command -v python3 >/dev/null 2>&1; then
+      python3 -c "
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(2)
+try:
+  s.connect((sys.argv[1], int(sys.argv[2])))
+  s.close()
+  sys.exit(0)
+except Exception:
+  sys.exit(1)
+" "$DB_HOST" "$DB_PORT" 2>/dev/null
+    else
+      python -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(2)
+try:
+  s.connect(('$DB_HOST', $DB_PORT))
+  s.close()
+  exit(0)
+except Exception:
+  exit(1)
+" 2>/dev/null
+    fi
+  }
+  _try_all_start_postgres() {
+    # Prefer project-local or container so we don't start system postgres (which would bind 5432 and block our cluster)
+    _try_start_postgres_pg_ctl
+    if ! command -v initdb >/dev/null 2>&1; then
+      if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq 2>/dev/null && apt-get install -y -qq postgresql postgresql-client 2>/dev/null || true
+      elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y postgresql-server postgresql 2>/dev/null || true
+      elif command -v yum >/dev/null 2>&1; then
+        yum install -y postgresql-server postgresql 2>/dev/null || true
+      fi
+    fi
+    _try_start_postgres_local_dir
+    _try_start_postgres_docker
+    _try_start_postgres_system
+  }
+  echo "[init] Waiting for PostgreSQL at $DB_HOST:$DB_PORT (will retry starting DB until ready)..."
+  DB_READY=0
+  # Quick probe: if Postgres is already listening (e.g. started by systemd or previous run), skip the long loop
+  for _ in 1 2 3; do
+    if _db_ready; then
+      echo "[init] PostgreSQL is ready (already listening)."
+      DB_READY=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$DB_READY" -ne 1 ]; then
+    for attempt in $(seq 1 10); do
+      _try_all_start_postgres
+      sleep 3
+      for i in $(seq 1 60); do
+        if _db_ready; then
+          echo "[init] PostgreSQL is ready."
+          DB_READY=1
+          break 2
+        fi
+        sleep 1
+      done
+      [ "$attempt" -lt 10 ] && echo "[init] PostgreSQL not ready yet, retrying in 5s (attempt $attempt/10)..." && sleep 5
+    done
+  fi
+  if [ "$DB_READY" -ne 1 ]; then
+    echo "[init] PostgreSQL did not become ready at $DB_HOST:$DB_PORT after 10 attempts." >&2
+    echo "Fix the database before starting:" >&2
+    echo "  - If Postgres is already running: SKIP_DB_WAIT=1 ./run node   or set skip_db_wait: true in config/app.yaml" >&2
+    echo "  - If allowed: systemctl start postgresql   or   brew services start postgresql" >&2
+    echo "  - Project-local: install postgresql (and postgresql-XX-pgvector), then re-run (uses .local/postgres-data)" >&2
+    echo "  - Or use Docker: ./run docker" >&2
+    echo "  - Debug: pg_isready -h $DB_HOST -p $DB_PORT" >&2
+    exit 1
+  fi
+fi
+
+if [ -f "alembic.ini" ]; then
+  echo "[init] Running alembic upgrade head"
+  alembic upgrade head || true
+fi
+
+# Host/port come from config/app.yaml (agent-backend serve reads it)
+echo "[run] Starting agent-backend"
+if [ "${DEV}" = "1" ]; then
+  exec agent-backend serve --reload
+else
+  exec agent-backend serve
+fi
