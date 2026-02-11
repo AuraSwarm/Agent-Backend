@@ -1,0 +1,58 @@
+# models.yaml.example - copy to models.yaml and set env vars (e.g. DASHSCOPE_API_KEY)
+
+embedding_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    # OpenAI-compatible (use /compatible-mode/v1/embeddings for same request format)
+    endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+    model: "text-embedding-v3"
+    dimensions: 1024
+    timeout: 10
+  openai:
+    api_key_env: "OPENAI_API_KEY"
+    endpoint: "https://api.openai.com/v1/embeddings"
+    model: "text-embedding-3-small"
+    dimensions: 1536
+    timeout: 10
+
+default_embedding_provider: "dashscope"
+
+# Chat API for summarization and /chat (OpenAI-compatible)
+chat_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen-max"
+    timeout: 60
+    models:
+      - qwen-max
+      - qwen3-max
+      - qwen3-235b-a22b-thinking-2507
+      - qwen3-coder-plus
+      - qwen2.5-coder-32b-instruct
+default_chat_provider: "dashscope"
+
+summary_strategies:
+  context_compression_v2:
+    model: "qwen3-max"  # default for compress/summary mode
+    prompt_template: |
+      请将对话压缩为JSON，必须包含：
+      - decision_points: 核心决策
+      - todos: 待办事项
+      - entities: {files: [...], tools: [...]}
+      - context_state: 当前状态描述
+      - code_snippets: [
+          {language: "python", code: "...", purpose: "实现XX功能"},
+          ...
+        ]
+      原始对话：{history}
+    output_schema:
+      properties:
+        code_snippets:
+          type: array
+          items:
+            type: object
+            properties:
+              language: {type: string}
+              code: {type: string}
+              purpose: {type: string}
