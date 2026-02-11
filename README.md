@@ -68,6 +68,8 @@ agent-backend health                # GET /health
 ./run                              # Run backend locally (DB + env + serve)
 ./run configure                    # Same as agent-backend configure
 ./run docker                       # Same as agent-backend start
+
+./scripts/test-node-integrations.sh  # Check copilot-cli and Claude on current node
 ```
 
 ## Quick start
@@ -135,6 +137,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for config schema and component overview.
 | POST | `/chat` | Chat completion (see [Chat API](#chat-api) below) |
 | GET | `/sessions/{id}/search?query=` | Semantic search over session messages |
 | DELETE | `/sessions/{id}` | Delete session (cleanup) |
+| GET | `/tools` | List registered local tools (id, name, description) |
+| POST | `/tools/execute` | Execute a local tool by id with params (returns stdout, stderr, returncode) |
+| POST | `/code-review` | Code review: run Copilot or Claude CLI on path, return report (body: `path`, `provider`: `copilot` \| `claude`) |
 
 ### Chat API
 

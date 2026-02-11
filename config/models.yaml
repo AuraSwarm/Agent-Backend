@@ -33,6 +33,17 @@ chat_providers:
       - qwen2.5-coder-32b-instruct
 default_chat_provider: "dashscope"
 
+# Local tools: registered for GET /tools and POST /tools/execute (safe arg validation)
+local_tools:
+  - id: echo
+    name: Echo
+    description: Print a message to stdout
+    command: ["echo", "{message}"]
+  - id: date
+    name: Date
+    description: Print current date
+    command: ["date"]
+
 summary_strategies:
   context_compression_v2:
     model: "qwen3-max"  # default for compress/summary mode

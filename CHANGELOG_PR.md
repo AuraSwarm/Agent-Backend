@@ -6,7 +6,7 @@
 
 ## Summary
 
-This PR adds the Agent Backend service (FastAPI, config-driven chat, embeddings, sessions, Web UI) and extends the Chat API with **deep thinking**, **deep research**, stream **usage/duration** stats, and a Web UI **stop** button. Documentation and tests are included.
+This PR adds the Agent Backend service (FastAPI, config-driven chat, embeddings, sessions, Web UI) and extends the Chat API with **deep thinking**, **deep research**, stream **usage/duration** stats, and a Web UI **stop** button. It also adds **Code Review** (path / git commits / uncommitted changes) with streaming, validation, persisted history, and a **Code** tab in the Web UI. Documentation and tests are included.
 
 ---
 
@@ -28,12 +28,21 @@ This PR adds the Agent Backend service (FastAPI, config-driven chat, embeddings,
 - **GET /sessions/{id}/messages** – Messages for a session.
 - **DELETE /sessions/{id}** – Delete a session (cleanup).
 
+### Code Review
+
+- **POST /code-review** – Run code review (path or git commits or uncommitted); returns report.
+- **POST /code-review/stream** – Same as above with SSE (log lines + final report).
+- **POST /code-review/validate-commits** – Validate that given commits are in current git tree and working tree is clean; returns `{ "valid": true }` or `{ "valid": false, "error": "..." }`. Used by Web UI to block run when invalid.
+- **Review modes:** (1) **Full repo** – review all code under a path; (2) **By Git commit** – commit list required, validated (in tree + clean) before run; (3) **Current changes** – `git diff HEAD` (optional path scope).
+- **Path** is required for all modes (path, git, uncommitted) in the Web UI.
+- **Code review history:** **GET /code-reviews** (list), **GET /code-reviews/{id}** (detail), **POST /code-reviews** (save after run), **DELETE /code-reviews/{id}** (delete). Stored in DB table `code_reviews`.
+
 ### Web UI
 
-- Chat with model select, **深度思考** and **深度研究** checkboxes.
-- **Stop** button during stream (aborts request via `AbortController`).
-- Per-message **复制** / **Markdown** copy and stats line (token count + 总耗时).
-- Markdown rendering (marked + fallback), fixed layout (sidebar + main scroll).
+- **Tabs:** Chat | Code.
+- **Chat:** Model select, **深度思考** and **深度研究** checkboxes; **Stop** button during stream (aborts via `AbortController`); per-message **复制** / **Markdown** copy and stats line (token count + 总耗时); Markdown rendering (marked + fallback).
+- **Code:** Code Review form with **path** (required), three modes (全 repo / 按 Git 提交 / 当前变更), provider select; for “按 Git 提交”, commit list + **validate-commits** before run, red error message when invalid and run is blocked; streaming logs + Markdown-rendered report; **Review 历史** sidebar list (same style as 最近对话), load/delete saved reviews.
+- Fixed layout: sidebar + main scroll; Code Review output and history in sidebar.
 
 ### Ops & config
 
@@ -54,7 +63,9 @@ This PR adds the Agent Backend service (FastAPI, config-driven chat, embeddings,
 ## Tests
 
 - **Chat API:** non-stream, stream, `deep_thinking`, `deep_research`, optional params, usage/duration schema, stream event format, deep_research priority when both flags true.
-- **Web UI:** structure (messages, 深度思考/深度研究/发送/停止), stream stats and copy buttons in `app.js`, `.msg-stats` in CSS.
+- **Code Review (runner):** `gather_code_files`, path safety, `validate_commits_for_review` (empty, whitespace, not git repo, mocked valid), `gather_diffs_from_uncommitted` path-outside-root safety, stream error event when runner raises.
+- **Code Review (API):** POST /code-review, /code-review/stream (path, commits, uncommitted_only), POST /code-review/validate-commits (empty, not git, valid, 422), GET/POST/DELETE /code-reviews (list, create, delete, limit cap, 404 for invalid id).
+- **Web UI:** structure (messages, 深度思考/深度研究/发送/停止, Chat/Code tabs), stream stats and copy buttons in `app.js`, `.msg-stats` in CSS; Code page path required, three review modes, git error area; `app.js` validate-commits call, path/git error display, path check before run.
 - **Layout:** no document scroll; sidebar and main scroll areas.
 - **Integration:** config, adapters, run script, main API (sessions, search, delete).
 
@@ -71,3 +82,4 @@ None. New endpoints and optional request fields only.
 - Ensure `config/app.yaml` exists (e.g. from `config/app.yaml.example`) and `database_url` is set.
 - For chat, configure a provider (e.g. DashScope) and API key (`dashscope_api_key` or env).
 - Web UI is served at `/` when the server is running; static assets under `/static/`.
+- Code Review runs under a root directory: set `CODE_REVIEW_ROOT` to the repo path, or leave unset to use the server cwd. For “按 Git 提交” and “当前变更”, the root must be inside a git repository; Copilot/Claude CLI must be available for the chosen provider.

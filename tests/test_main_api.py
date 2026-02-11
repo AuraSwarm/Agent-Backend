@@ -316,6 +316,110 @@ def test_delete_session_invalid_id_returns_404(client):
     assert "detail" in r.json()
 
 
+def test_code_reviews_list_empty(client):
+    """GET /code-reviews returns 200 and a list (e.g. empty when no data)."""
+    r = client.get("/code-reviews?limit=10")
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    for item in data:
+        assert "id" in item
+        assert "created_at" in item
+        assert "mode" in item
+        assert "provider" in item
+        assert "files_included" in item
+
+
+def test_code_review_get_404(client):
+    """GET /code-reviews/{id} returns 404 for invalid id."""
+    r = client.get("/code-reviews/not-a-valid-uuid")
+    assert r.status_code == 404
+
+
+def test_code_review_validate_commits_empty(client, tmp_path):
+    """POST /code-review/validate-commits returns valid=false when commits empty."""
+    with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        r = client.post("/code-review/validate-commits", json={"commits": []})
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("valid") is False
+    assert "error" in data
+
+
+def test_code_review_validate_commits_not_git_repo(client, tmp_path):
+    """POST /code-review/validate-commits returns valid=false when not a git repo."""
+    with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        r = client.post("/code-review/validate-commits", json={"commits": ["abc123"]})
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("valid") is False
+    assert "error" in data
+    assert "git" in (data.get("error") or "").lower()
+
+
+def test_code_review_validate_commits_valid(client, tmp_path):
+    """POST /code-review/validate-commits returns valid=true when validation passes."""
+    with patch("app.main.validate_commits_for_review", return_value=(True, None)):
+        r = client.post("/code-review/validate-commits", json={"commits": ["abc123"]})
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("valid") is True
+    assert "error" not in data or data.get("error") is None
+
+
+def test_code_review_validate_commits_missing_body_422(client):
+    """POST /code-review/validate-commits without body returns 422."""
+    r = client.post("/code-review/validate-commits", json={})
+    assert r.status_code == 422
+
+
+def test_code_reviews_create_returns_id_and_report(client):
+    """POST /code-reviews creates a record and returns id, report, mode."""
+    r = client.post(
+        "/code-reviews",
+        json={
+            "mode": "path",
+            "path": "app",
+            "provider": "claude",
+            "report": "## Summary\nOK",
+            "files_included": 1,
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("id"), "response must include id"
+    assert data.get("report") == "## Summary\nOK"
+    assert data.get("mode") == "path"
+    assert data.get("files_included") == 1
+
+
+def test_code_reviews_delete_returns_200(client):
+    """DELETE /code-reviews/{id} returns 200 when record exists (mocked)."""
+    r = client.post(
+        "/code-reviews",
+        json={"mode": "path", "path": "x", "provider": "claude", "report": "X", "files_included": 0},
+    )
+    rid = r.json().get("id")
+    r2 = client.delete("/code-reviews/" + rid)
+    assert r2.status_code == 200
+    assert "ok" in r2.json().get("status", "") or "message" in r2.json()
+
+
+def test_code_reviews_list_limit_capped(client):
+    """GET /code-reviews with large limit is capped (e.g. 100)."""
+    r = client.get("/code-reviews?limit=200")
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    assert len(data) <= 100
+
+
+def test_code_reviews_delete_invalid_uuid_404(client):
+    """DELETE /code-reviews/{id} returns 404 for invalid uuid."""
+    r = client.delete("/code-reviews/not-a-uuid")
+    assert r.status_code == 404
+
+
 def test_web_ui_structure(client):
     """Web UI: index has sidebar with independent scroll area, input actions, and hint."""
     r = client.get("/")

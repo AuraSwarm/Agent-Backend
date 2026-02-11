@@ -173,3 +173,61 @@ Semantic search over session messages (pgvector).
 ## DELETE /sessions/{id}
 
 Delete a session and its messages (cleanup). **Response:** `204` or `404` if not found.
+
+---
+
+## Local tools
+
+Tools are defined in **config/models.yaml** under `local_tools`. Each entry has `id`, `name`, `description`, and `command` (list of strings or a single string). Placeholders like `{message}` in `command` are replaced from the request `params`. Arguments are validated (whitelist; no shell metacharacters) before execution.
+
+### GET /tools
+
+List registered local tools.
+
+**Response:** `200` with array of `{"id": "...", "name": "...", "description": "..."}`.
+
+### POST /tools/execute
+
+Execute a registered local tool.
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `tool_id` | string | yes | Id from GET /tools (e.g. `echo`, `date`). |
+| `params` | object | no | Key-value map for command placeholders (e.g. `{"message": "hello"}` for `echo`). |
+
+**Response:** `200` with `{"stdout": "...", "stderr": "...", "returncode": 0}`. On invalid tool id or rejected args: `400`. On execution timeout: `504`.
+
+**Example (echo):**
+
+```bash
+curl -X POST http://localhost:8000/tools/execute -H "Content-Type: application/json" -d '{"tool_id":"echo","params":{"message":"hello"}}'
+```
+
+---
+
+## Code review
+
+Uses **Copilot** or **Claude** CLI to review code under a path and return a structured report. The server must have `copilot` and/or `claude` on `PATH` (see `./scripts/test-node-integrations.sh`). Path is relative to **CODE_REVIEW_ROOT** (env); if unset, current working directory is used.
+
+### POST /code-review
+
+**Request body:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `path` | string | required | Relative path (e.g. `app`, `app/main.py`) under root. |
+| `provider` | string | `"claude"` | `"copilot"` or `"claude"`. |
+| `max_files` | int | 200 | Max number of code files to include. |
+| `max_total_bytes` | int | 300000 | Max total content size (truncation if exceeded). |
+| `timeout_seconds` | int | 180 | CLI run timeout. |
+
+**Response:** `200` with `{"report": "...", "provider": "...", "files_included": N, "stderr": "..."}`. Report is the CLI stdout (Summary, Issues, Suggestions, etc.). On invalid path or provider: `400`. On timeout: `504`.
+
+**Example:**
+
+```bash
+export CODE_REVIEW_ROOT=/path/to/repo
+curl -X POST http://localhost:8000/code-review -H "Content-Type: application/json" -d '{"path":"app","provider":"claude"}'
+```
