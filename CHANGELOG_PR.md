@@ -35,13 +35,14 @@ This PR adds the Agent Backend service (FastAPI, config-driven chat, embeddings,
 - **POST /code-review/validate-commits** – Validate that given commits are in current git tree and working tree is clean; returns `{ "valid": true }` or `{ "valid": false, "error": "..." }`. Used by Web UI to block run when invalid.
 - **Review modes:** (1) **Full repo** – review all code under a path; (2) **By Git commit** – commit list required, validated (in tree + clean) before run; (3) **Current changes** – `git diff HEAD` (optional path scope).
 - **Path** is required for all modes (path, git, uncommitted) in the Web UI.
-- **Code review history:** **GET /code-reviews** (list), **GET /code-reviews/{id}** (detail), **POST /code-reviews** (save after run), **DELETE /code-reviews/{id}** (delete). Stored in DB table `code_reviews`.
+- **Code review history:** **GET /code-reviews** (list), **GET /code-reviews/{id}** (detail), **POST /code-reviews** (save after run), **DELETE /code-reviews/{id}** (delete). Stored in DB table `code_reviews`. Saved **title** = repo address (main) + review mode (subtitle), e.g. `https://github.com/org/repo — 按路径 app`; repo is resolved from `git config remote.origin.url` when available, else root path.
 
 ### Web UI
 
 - **Tabs:** Chat | Code.
 - **Chat:** Model select, **深度思考** and **深度研究** checkboxes; **Stop** button during stream (aborts via `AbortController`); per-message **复制** / **Markdown** copy and stats line (token count + 总耗时); Markdown rendering (marked + fallback).
 - **Code:** Code Review form with **path** (required), three modes (全 repo / 按 Git 提交 / 当前变更), provider select; for “按 Git 提交”, commit list + **validate-commits** before run, red error message when invalid and run is blocked; streaming logs + Markdown-rendered report; **Review 历史** sidebar list (same style as 最近对话), load/delete saved reviews.
+- **Review 历史 title:** List shows **main title** = repo address (git `remote.origin.url` or root path) and **subtitle** = review mode (当前变更 / Git xxx / 按路径 app). Detail view shows full title then file count and provider. Title format: `repo — mode`.
 - Fixed layout: sidebar + main scroll; Code Review output and history in sidebar.
 
 ### Ops & config
@@ -74,6 +75,14 @@ This PR adds the Agent Backend service (FastAPI, config-driven chat, embeddings,
 ## Breaking changes
 
 None. New endpoints and optional request fields only.
+
+---
+
+## Recent updates (this branch)
+
+- **Code review title:** History titles use **main = repo address** (git remote origin URL or resolved root path) and **subtitle = review mode** (当前变更 / Git commits / 按路径 …). Backend: `_repo_address()`, `_code_review_subtitle()`, `_code_review_title(root)` in `app/routers/code_review.py`.
+- **Web UI:** Review 历史 list renders main title + subtitle (split on ` — `); detail status shows full title then “共 N 个文件, Provider: …”. CSS: `.sidebar-code-reviews .conversation-preview-subtitle`; `.code-review-status` with `white-space: pre-line`.
+- **Code quality (from Copilot/Claude review):** `datetime.utcnow` → `datetime.now(timezone.utc)` in models; `SessionStatus` constants in archive; adapter `_with_retry` with exponential backoff; cloud adapter API key validation (clear error when missing); DB URL parsing via `urllib.parse.urlparse`; chat router logs invalid session_id and returns 503 on missing API key.
 
 ---
 
