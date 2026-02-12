@@ -7,7 +7,7 @@ Celery task: archive_by_activity().
 - >1095 days: safe delete (audit log first).
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
@@ -15,10 +15,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session as SyncSession, sessionmaker
 
 from app.tasks.celery_app import celery_app
-
 from app.config.loader import get_app_settings
 from app.storage.base import Base
 from app.storage import models_archive  # noqa: F401
+from app.storage.models import SessionStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +26,7 @@ logger = structlog.get_logger(__name__)
 def _sync_engine():
     """Sync engine for Celery (postgresql:// with psycopg2)."""
     url = get_app_settings().database_url
-    sync_url = url.replace("postgresql+asyncpg", "postgresql").replace("postgresql+asyncpg", "postgresql")
+    sync_url = url.replace("postgresql+asyncpg", "postgresql")
     return create_engine(sync_url, pool_pre_ping=True)
 
 
@@ -46,7 +46,7 @@ def archive_by_activity(self: Any) -> dict[str, int]:
     try:
         # Ensure archive table exists
         Base.metadata.create_all(db.get_bind(), tables=[models_archive.MessageArchive.__table__])
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cold_archived = _migrate_cold(db, now)
         parquet_exported = _export_parquet(db, now)
         deleted = _delete_old(db, now)
@@ -68,9 +68,9 @@ def _migrate_cold(session: SyncSession, now: datetime) -> int:
     r = session.execute(
         text("""
             SELECT id FROM sessions
-            WHERE updated_at < :c7 AND updated_at >= :c180 AND status = 1
+            WHERE updated_at < :c7 AND updated_at >= :c180 AND status = :status_active
         """),
-        {"c7": cutoff_7, "c180": cutoff_180},
+        {"c7": cutoff_7, "c180": cutoff_180, "status_active": SessionStatus.ACTIVE},
     )
     session_ids = [row[0] for row in r.fetchall()]
     count = 0
@@ -84,7 +84,10 @@ def _migrate_cold(session: SyncSession, now: datetime) -> int:
             {"sid": sid},
         )
         session.execute(text("DELETE FROM messages WHERE session_id = :sid"), {"sid": sid})
-        session.execute(text("UPDATE sessions SET status = 2 WHERE id = :sid"), {"sid": sid})
+        session.execute(
+            text("UPDATE sessions SET status = :st WHERE id = :sid"),
+            {"sid": sid, "st": SessionStatus.COLD_ARCHIVED},
+        )
         count += 1
     return count
 
@@ -96,13 +99,16 @@ def _export_parquet(session: SyncSession, now: datetime) -> int:
     r = session.execute(
         text("""
             SELECT id FROM sessions
-            WHERE updated_at < :c180 AND updated_at >= :c1095 AND status = 2
+            WHERE updated_at < :c180 AND updated_at >= :c1095 AND status = :st_cold
         """),
-        {"c180": cutoff_180, "c1095": cutoff_1095},
+        {"c180": cutoff_180, "c1095": cutoff_1095, "st_cold": SessionStatus.COLD_ARCHIVED},
     )
     ids = [row[0] for row in r.fetchall()]
     for sid in ids:
-        session.execute(text("UPDATE sessions SET status = 3 WHERE id = :sid"), {"sid": sid})
+        session.execute(
+            text("UPDATE sessions SET status = :st WHERE id = :sid"),
+            {"sid": sid, "st": SessionStatus.DEEP_ARCHIVED},
+        )
     # TODO: actual Parquet export to MinIO
     return len(ids)
 
@@ -111,10 +117,13 @@ def _delete_old(session: SyncSession, now: datetime) -> int:
     """>1095 days: safe delete (after audit); stub: just count and mark status=4."""
     cutoff = now - timedelta(days=1095)
     r = session.execute(
-        text("SELECT id FROM sessions WHERE updated_at < :cut AND status = 3"),
-        {"cut": cutoff},
+        text("SELECT id FROM sessions WHERE updated_at < :cut AND status = :st_deep"),
+        {"cut": cutoff, "st_deep": SessionStatus.DEEP_ARCHIVED},
     )
     ids = [row[0] for row in r.fetchall()]
     for sid in ids:
-        session.execute(text("UPDATE sessions SET status = 4 WHERE id = :sid"), {"sid": sid})
+        session.execute(
+            text("UPDATE sessions SET status = :st WHERE id = :sid"),
+            {"sid": sid, "st": SessionStatus.DELETED},
+        )
     return len(ids)

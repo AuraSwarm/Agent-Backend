@@ -45,8 +45,27 @@ class BaseToolAdapter(ABC):
         ...
 
     async def _with_retry(self, coro_factory: Callable[[], Any]) -> Any:
-        """Run async call once with timeout."""
-        return await asyncio.wait_for(coro_factory(), timeout=self.timeout)
+        """Run async call with timeout and exponential backoff retry (transient errors)."""
+        last_exc: BaseException | None = None
+        for attempt in range(max(1, self.max_retries)):
+            try:
+                return await asyncio.wait_for(coro_factory(), timeout=self.timeout)
+            except (asyncio.TimeoutError, OSError, ConnectionError) as e:
+                last_exc = e
+                if attempt + 1 >= self.max_retries:
+                    raise
+                delay = 2 ** attempt
+                logger.warning(
+                    "adapter_retry",
+                    attempt=attempt + 1,
+                    max_retries=self.max_retries,
+                    delay_seconds=delay,
+                    error_type=type(e).__name__,
+                )
+                await asyncio.sleep(delay)
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("_with_retry exhausted")
 
     def _estimate_tokens(self, text: str) -> int:
         """Rough token count (chars / 4). Override for model-specific logic."""

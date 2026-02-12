@@ -855,10 +855,26 @@
         if (activeCodeReviewId && s.id === activeCodeReviewId) li.classList.add("active");
         var left = document.createElement("div");
         left.className = "conversation-item-left";
+        var mainTitle = "";
+        var subTitle = "";
+        var twoLine = false;
+        if (s.title && s.title.indexOf(" — ") !== -1) {
+          var parts = s.title.split(" — ", 2);
+          mainTitle = parts[0].trim();
+          subTitle = parts[1].trim();
+          twoLine = true;
+        }
         var titleEl = document.createElement("span");
         titleEl.className = "conversation-preview-title";
-        titleEl.textContent = s.title || s.mode + " · " + s.provider;
+        titleEl.textContent = mainTitle || (s.title || s.mode + " · " + (s.provider || ""));
+        titleEl.title = s.title || "";
         left.appendChild(titleEl);
+        if (twoLine && subTitle) {
+          var subEl = document.createElement("span");
+          subEl.className = "conversation-preview-subtitle";
+          subEl.textContent = subTitle;
+          left.appendChild(subEl);
+        }
         var timeEl = document.createElement("span");
         timeEl.className = "conversation-time";
         timeEl.textContent = formatRelativeTime(s.created_at);
@@ -889,7 +905,10 @@
         activeCodeReviewId = id;
         setActiveInCodeReviewList(id);
         if (reportEl) reportEl.innerHTML = data.report ? renderMarkdown(data.report) : "";
-        if (statusEl) statusEl.textContent = "共 " + (data.files_included || 0) + " 个文件，Provider: " + (data.provider || "");
+        if (statusEl) {
+          var titleLine = data.title ? data.title + "\n" : "";
+          statusEl.textContent = titleLine + "共 " + (data.files_included || 0) + " 个文件，Provider: " + (data.provider || "");
+        }
         reportEl.scrollTop = reportEl.scrollHeight;
         var tabCode = document.getElementById("tabCode");
         if (tabCode) tabCode.click();

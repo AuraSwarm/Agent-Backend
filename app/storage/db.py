@@ -8,6 +8,7 @@ Database engine, async session factory, and audit logging.
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
+from urllib.parse import urlparse
 from uuid import UUID
 
 import structlog
@@ -33,7 +34,13 @@ def get_engine():
     if _engine is None:
         settings = get_app_settings()
         url = settings.database_url
-        host_port = url.split("@", 1)[1].split("/")[0] if "@" in url else "localhost"
+        try:
+            parsed = urlparse(url)
+            host_port = parsed.hostname or "localhost"
+            if parsed.port is not None:
+                host_port = f"{host_port}:{parsed.port}"
+        except Exception:
+            host_port = "localhost"
         logger.info("db_engine_creating", host_port=host_port)
         _engine = create_async_engine(
             url,

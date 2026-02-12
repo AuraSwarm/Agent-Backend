@@ -46,13 +46,9 @@ def mock_db():
     factory_mock = MagicMock()
     factory_mock.return_value = Ctx()
 
-    with patch("app.main.init_db", side_effect=noop_init_db), patch(
-        "app.main.get_session_factory", return_value=factory_mock
-    ), patch("app.main.session_scope", new=session_scope), patch(
+    with patch("app.storage.db.init_db", side_effect=noop_init_db), patch(
         "app.storage.db.get_session_factory", return_value=factory_mock
-    ), patch(
-        "app.storage.db.session_scope", new=session_scope
-    ):
+    ), patch("app.storage.db.session_scope", new=session_scope):
         yield session_mock
 
 
@@ -66,8 +62,8 @@ def client(mock_db):
         return [0.0] * 1536  # dummy vector for session search
 
     with patch("app.main.validate_required_env"), patch(
-        "app.main.CloudAPIAdapter"
-    ) as AdapterMock, patch("app.main.get_embedding", side_effect=fake_embedding):
+        "app.routers.chat.CloudAPIAdapter"
+    ) as AdapterMock, patch("app.routers.sessions.get_embedding", side_effect=fake_embedding):
         AdapterMock.return_value.call = AsyncMock(return_value=("ok", {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}))
         AdapterMock.return_value.stream_call = fake_stream
         from app.main import app
@@ -338,7 +334,7 @@ def test_code_review_get_404(client):
 
 def test_code_review_validate_commits_empty(client, tmp_path):
     """POST /code-review/validate-commits returns valid=false when commits empty."""
-    with patch("app.main._code_review_root", return_value=str(tmp_path)):
+    with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
         r = client.post("/code-review/validate-commits", json={"commits": []})
     assert r.status_code == 200
     data = r.json()
@@ -348,7 +344,7 @@ def test_code_review_validate_commits_empty(client, tmp_path):
 
 def test_code_review_validate_commits_not_git_repo(client, tmp_path):
     """POST /code-review/validate-commits returns valid=false when not a git repo."""
-    with patch("app.main._code_review_root", return_value=str(tmp_path)):
+    with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
         r = client.post("/code-review/validate-commits", json={"commits": ["abc123"]})
     assert r.status_code == 200
     data = r.json()
@@ -359,7 +355,7 @@ def test_code_review_validate_commits_not_git_repo(client, tmp_path):
 
 def test_code_review_validate_commits_valid(client, tmp_path):
     """POST /code-review/validate-commits returns valid=true when validation passes."""
-    with patch("app.main.validate_commits_for_review", return_value=(True, None)):
+    with patch("app.routers.code_review.validate_commits_for_review", return_value=(True, None)):
         r = client.post("/code-review/validate-commits", json={"commits": ["abc123"]})
     assert r.status_code == 200
     data = r.json()

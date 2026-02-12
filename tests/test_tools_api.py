@@ -47,9 +47,7 @@ def mock_db():
     factory_mock = MagicMock()
     factory_mock.return_value = Ctx()
 
-    with patch("app.main.init_db", side_effect=noop_init_db), patch(
-        "app.main.get_session_factory", return_value=factory_mock
-    ), patch("app.main.session_scope", new=session_scope), patch(
+    with patch("app.storage.db.init_db", side_effect=noop_init_db), patch(
         "app.storage.db.get_session_factory", return_value=factory_mock
     ), patch("app.storage.db.session_scope", new=session_scope):
         yield session_mock

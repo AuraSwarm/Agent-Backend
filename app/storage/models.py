@@ -7,8 +7,16 @@ SQLAlchemy declarative models for sessions, messages, session_summaries.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
+
+# Session status for archival (used in archive_tasks and queries)
+SessionStatus = type("SessionStatus", (), {"ACTIVE": 1, "COLD_ARCHIVED": 2, "DEEP_ARCHIVED": 3, "DELETED": 4})()
+
+
+def _utc_now() -> datetime:
+    """Timezone-aware UTC now (Python 3.12+ preferred over deprecated utcnow())."""
+    return datetime.now(timezone.utc)
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -31,9 +39,9 @@ class Session(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now
     )
-    status: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
+    status: Mapped[int] = mapped_column(SmallInteger, default=SessionStatus.ACTIVE, nullable=False)
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     metadata_: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
 
@@ -56,7 +64,7 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(32), nullable=False)  # user, assistant, system
     content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
 
     session = relationship("Session", back_populates="messages")
 
@@ -79,7 +87,7 @@ class SessionSummary(Base):
     strategy_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     summary_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # optional human-readable
     summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)  # decision_points, todos, code_snippets
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
 
     session = relationship("Session", back_populates="summaries")
 
@@ -92,7 +100,7 @@ class CodeReview(Base):
     __tablename__ = "code_reviews"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
     mode: Mapped[str] = mapped_column(String(32), nullable=False)  # path, git, uncommitted
     path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     commits: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)  # for mode=git
