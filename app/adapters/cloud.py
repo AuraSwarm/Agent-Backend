@@ -33,7 +33,11 @@ class CloudAPIAdapter(BaseToolAdapter):
         self.model = model
 
     def _headers(self) -> dict[str, str]:
-        key = os.environ.get(self.api_key_env, "")
+        key = (os.environ.get(self.api_key_env) or "").strip()
+        if not key:
+            raise ValueError(
+                f"API key not set: set {self.api_key_env} in environment or config (e.g. config/app.yaml)"
+            )
         return {
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",

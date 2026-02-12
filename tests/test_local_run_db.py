@@ -20,7 +20,7 @@ async def _run_lifespan(app):
 def test_init_db_is_called_in_lifespan():
     """Lifespan must call init_db so the app never runs without DB in local mode."""
     init_mock = AsyncMock(return_value=None)
-    with patch("app.main.init_db", side_effect=init_mock), patch(
+    with patch("app.storage.db.init_db", side_effect=init_mock), patch(
         "app.main.validate_required_env"
     ), patch("app.main.start_config_watcher"):
         app = object()
@@ -31,7 +31,7 @@ def test_init_db_is_called_in_lifespan():
 def test_lifespan_raises_system_exit_when_db_connection_refused():
     """When PostgreSQL is not reachable, lifespan must exit with a clear message."""
     err = ConnectionRefusedError(111, "Connection refused")
-    with patch("app.main.init_db", AsyncMock(side_effect=err)), patch(
+    with patch("app.storage.db.init_db", AsyncMock(side_effect=err)), patch(
         "app.main.validate_required_env"
     ):
         app = object()
@@ -45,7 +45,7 @@ def test_lifespan_raises_system_exit_when_db_connection_refused():
 def test_lifespan_system_exit_message_suggests_fix_not_skip():
     """DB connection error message must suggest fixing DB (systemctl, pg_ctl, docker), not skipping."""
     err = ConnectionRefusedError(111, "Connection refused")
-    with patch("app.main.init_db", AsyncMock(side_effect=err)), patch(
+    with patch("app.storage.db.init_db", AsyncMock(side_effect=err)), patch(
         "app.main.validate_required_env"
     ):
         app = object()
@@ -59,7 +59,7 @@ def test_lifespan_system_exit_message_suggests_fix_not_skip():
 def test_lifespan_raises_system_exit_on_oserror_connection_refused():
     """OSError with errno 111 (connection refused) is handled like ConnectionRefusedError."""
     err = OSError(111, "Connection refused")
-    with patch("app.main.init_db", AsyncMock(side_effect=err)), patch(
+    with patch("app.storage.db.init_db", AsyncMock(side_effect=err)), patch(
         "app.main.validate_required_env"
     ):
         app = object()

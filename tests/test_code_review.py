@@ -52,9 +52,7 @@ def mock_db():
     factory_mock = MagicMock()
     factory_mock.return_value = Ctx()
 
-    with patch("app.main.init_db", side_effect=noop_init_db), patch(
-        "app.main.get_session_factory", return_value=factory_mock
-    ), patch("app.main.session_scope", new=lambda: Ctx()), patch(
+    with patch("app.storage.db.init_db", side_effect=noop_init_db), patch(
         "app.storage.db.get_session_factory", return_value=factory_mock
     ), patch("app.storage.db.session_scope", new=lambda: Ctx()):
         yield session_mock
@@ -121,14 +119,14 @@ def test_run_code_review_invalid_provider():
 
 def test_code_review_api_success(client, tmp_path):
     (tmp_path / "one.py").write_text("code here", encoding="utf-8")
-    with patch("app.main.run_code_review") as m:
+    with patch("app.routers.code_review.run_code_review") as m:
         m.return_value = {
             "report": "## Summary\nGood.",
             "provider": "claude",
             "files_included": 1,
             "stderr": "",
         }
-        with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
             r = client.post(
                 "/code-review",
                 json={"path": ".", "provider": "claude"},
@@ -143,9 +141,9 @@ def test_code_review_api_success(client, tmp_path):
 def test_code_review_api_copilot(client, tmp_path):
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "x.py").write_text("x = 1", encoding="utf-8")
-    with patch("app.main.run_code_review") as m:
+    with patch("app.routers.code_review.run_code_review") as m:
         m.return_value = {"report": "OK", "provider": "copilot", "files_included": 1, "stderr": ""}
-        with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
             r = client.post(
                 "/code-review",
                 json={"path": "app", "provider": "copilot"},
@@ -155,7 +153,7 @@ def test_code_review_api_copilot(client, tmp_path):
 
 
 def test_code_review_api_invalid_path_400(client, tmp_path):
-    with patch("app.main._code_review_root", return_value=str(tmp_path)):
+    with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
         r = client.post(
             "/code-review",
             json={"path": "../outside", "provider": "claude"},
@@ -296,7 +294,7 @@ def test_gather_diffs_from_uncommitted_path_outside_root_ignored(tmp_path):
 def test_code_review_api_invalid_provider_400(client, tmp_path):
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "x.py").write_text("x", encoding="utf-8")
-    with patch("app.main._code_review_root", return_value=str(tmp_path)):
+    with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
         r = client.post(
             "/code-review",
             json={"path": "app", "provider": "invalid"},
@@ -308,9 +306,9 @@ def test_code_review_api_invalid_provider_400(client, tmp_path):
 def test_code_review_api_timeout_504(client, tmp_path):
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "x.py").write_text("x", encoding="utf-8")
-    with patch("app.main.run_code_review") as m:
+    with patch("app.routers.code_review.run_code_review") as m:
         m.side_effect = subprocess.TimeoutExpired("claude", 180)
-        with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
             r = client.post(
                 "/code-review",
                 json={"path": "app", "provider": "claude"},
@@ -323,13 +321,13 @@ def test_code_review_stream_api(client, tmp_path):
     """POST /code-review/stream returns SSE and yields log then report events."""
     (tmp_path / "lib").mkdir()
     (tmp_path / "lib" / "a.py").write_text("a = 1", encoding="utf-8")
-    with patch("app.main.run_code_review_stream") as mock_stream:
+    with patch("app.routers.code_review.run_code_review_stream") as mock_stream:
         def gen():
             yield {"type": "log", "message": "正在收集代码文件…"}
             yield {"type": "log", "message": "已找到 1 个文件。"}
             yield {"type": "report", "report": "## Summary\nOK", "provider": "claude", "files_included": 1, "stderr": ""}
         mock_stream.return_value = gen()
-        with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
             r = client.post(
                 "/code-review/stream",
                 json={"path": "lib", "provider": "claude"},
@@ -345,9 +343,9 @@ def test_code_review_stream_api(client, tmp_path):
 def test_code_review_api_accepts_optional_params(client, tmp_path):
     (tmp_path / "lib").mkdir()
     (tmp_path / "lib" / "a.py").write_text("a", encoding="utf-8")
-    with patch("app.main.run_code_review") as m:
+    with patch("app.routers.code_review.run_code_review") as m:
         m.return_value = {"report": "R", "provider": "claude", "files_included": 1, "stderr": ""}
-        with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
             r = client.post(
                 "/code-review",
                 json={
@@ -368,12 +366,12 @@ def test_code_review_api_accepts_optional_params(client, tmp_path):
 
 def test_code_review_stream_with_commits(client, tmp_path):
     """POST /code-review/stream with commits passes commits to runner."""
-    with patch("app.main.run_code_review_stream") as mock_stream:
+    with patch("app.routers.code_review.run_code_review_stream") as mock_stream:
         def gen():
             yield {"type": "log", "message": "Git 检查通过…"}
             yield {"type": "report", "report": "## Summary\nOK", "provider": "claude", "files_included": 2, "stderr": ""}
         mock_stream.return_value = gen()
-        with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
             r = client.post(
                 "/code-review/stream",
                 json={"path": "app", "provider": "claude", "commits": ["abc123", "def456"]},
@@ -386,12 +384,12 @@ def test_code_review_stream_with_commits(client, tmp_path):
 
 def test_code_review_stream_uncommitted_only(client, tmp_path):
     """POST /code-review/stream with uncommitted_only passes flag to runner."""
-    with patch("app.main.run_code_review_stream") as mock_stream:
+    with patch("app.routers.code_review.run_code_review_stream") as mock_stream:
         def gen():
             yield {"type": "log", "message": "正在收集当前未提交的变更…"}
             yield {"type": "report", "report": "## Summary\nOK", "provider": "claude", "files_included": 1, "stderr": ""}
         mock_stream.return_value = gen()
-        with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
             r = client.post(
                 "/code-review/stream",
                 json={"path": "app", "provider": "claude", "uncommitted_only": True},
@@ -404,9 +402,9 @@ def test_code_review_stream_uncommitted_only(client, tmp_path):
 
 def test_code_review_stream_first_event_error(client, tmp_path):
     """When runner raises, stream yields error event and stops."""
-    with patch("app.main.run_code_review_stream") as mock_stream:
+    with patch("app.routers.code_review.run_code_review_stream") as mock_stream:
         mock_stream.side_effect = ValueError("not a git repository")
-        with patch("app.main._code_review_root", return_value=str(tmp_path)):
+        with patch("app.routers.code_review._code_review_root", return_value=str(tmp_path)):
             r = client.post(
                 "/code-review/stream",
                 json={"path": "app", "provider": "claude"},

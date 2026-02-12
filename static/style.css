@@ -89,7 +89,7 @@ body {
   padding: 0;
 }
 
-/* Review 历史：独立滚动，与对话列表同风格 */
+/* Review 历史：独立滚动，主标题=repo 地址，副标题=review 模式 */
 .sidebar-code-reviews {
   display: flex;
   flex-direction: column;
@@ -97,6 +97,11 @@ body {
   min-height: 0;
   padding: 0;
   border-top: 1px solid var(--border);
+}
+
+.sidebar-code-reviews .conversation-preview-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
 }
 
 .conversation-list-scroll {
@@ -1003,6 +1008,7 @@ footer {
 .code-review-report.markdown-body .error { color: var(--danger, #c00); }
 
 .code-review-status {
+  white-space: pre-line;
   font-size: 0.8rem;
   color: var(--text-muted);
   margin: 0;
