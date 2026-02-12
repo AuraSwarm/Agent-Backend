@@ -11,29 +11,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session as SyncSession, sessionmaker
+from sqlalchemy import text
+from sqlalchemy.orm import Session as SyncSession
 
 from app.tasks.celery_app import celery_app
 from app.config.loader import get_app_settings
-from app.storage.base import Base
-from app.storage import models_archive  # noqa: F401
-from app.storage.models import SessionStatus
+from memory_base import Base
+from memory_base.models import SessionStatus
+from memory_base.models_archive import MessageArchive
+from memory_base.db import sync_session_scope
 
 logger = structlog.get_logger(__name__)
-
-
-def _sync_engine():
-    """Sync engine for Celery (postgresql:// with psycopg2)."""
-    url = get_app_settings().database_url
-    sync_url = url.replace("postgresql+asyncpg", "postgresql")
-    return create_engine(sync_url, pool_pre_ping=True)
-
-
-def _session_scope():
-    engine = _sync_engine()
-    Session = sessionmaker(engine, expire_on_commit=False)
-    return Session()
 
 
 @celery_app.task(bind=True, name="tasks.archive_tasks.archive_by_activity")
@@ -42,29 +30,20 @@ def archive_by_activity(self: Any) -> dict[str, int]:
     Archive sessions by activity (updated_at).
     Returns counts: cold_archived, parquet_exported, deleted.
     """
-    db = _session_scope()
-    try:
-        # Ensure archive table exists
-        Base.metadata.create_all(db.get_bind(), tables=[models_archive.MessageArchive.__table__])
+    url = get_app_settings().database_url
+    with sync_session_scope(url) as db:
+        Base.metadata.create_all(db.get_bind(), tables=[MessageArchive.__table__])
         now = datetime.now(timezone.utc)
         cold_archived = _migrate_cold(db, now)
         parquet_exported = _export_parquet(db, now)
         deleted = _delete_old(db, now)
-        db.commit()
         return {"cold_archived": cold_archived, "parquet_exported": parquet_exported, "deleted": deleted}
-    except Exception as e:
-        db.rollback()
-        logger.exception("archive_by_activity_failed", error=str(e))
-        raise
-    finally:
-        db.close()
 
 
 def _migrate_cold(session: SyncSession, now: datetime) -> int:
     """Move messages from sessions (7-180 days inactive) to messages_archive."""
     cutoff_7 = now - timedelta(days=7)
     cutoff_180 = now - timedelta(days=180)
-    # Select session ids in window
     r = session.execute(
         text("""
             SELECT id FROM sessions
@@ -75,7 +54,6 @@ def _migrate_cold(session: SyncSession, now: datetime) -> int:
     session_ids = [row[0] for row in r.fetchall()]
     count = 0
     for sid in session_ids:
-        # Copy messages to archive (simplified: no embedding in archive)
         session.execute(
             text("""
                 INSERT INTO messages_archive (id, session_id, role, content, created_at)
@@ -109,7 +87,6 @@ def _export_parquet(session: SyncSession, now: datetime) -> int:
             text("UPDATE sessions SET status = :st WHERE id = :sid"),
             {"sid": sid, "st": SessionStatus.DEEP_ARCHIVED},
         )
-    # TODO: actual Parquet export to MinIO
     return len(ids)
 
 

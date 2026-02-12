@@ -416,19 +416,7 @@ def test_code_reviews_delete_invalid_uuid_404(client):
     assert r.status_code == 404
 
 
-def test_web_ui_structure(client):
-    """Web UI: index has sidebar with independent scroll area, input actions, and hint."""
+def test_root_not_found(client):
+    """Backend is API-only; web UI is served by Web-Service. GET / returns 404."""
     r = client.get("/")
-    assert r.status_code == 200
-    html = r.text
-    # Sidebar and conversation list in its own scroll wrapper (左侧独立滚动)
-    assert "id=\"conversationListScroll\"" in html or "conversation-list-scroll" in html
-    assert "id=\"conversationList\"" in html
-    assert "sidebar" in html
-    # Input: 换行 + 发送, Shift+Enter hint
-    assert "newlineBtn" in html or "换行" in html
-    assert "sendBtn" in html or "发送" in html
-    assert "Shift+Enter" in html or "input-hint" in html
-    # Main area
-    assert "app-main" in html
-    assert "id=\"messages\"" in html
+    assert r.status_code == 404

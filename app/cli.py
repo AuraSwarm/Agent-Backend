@@ -50,13 +50,20 @@ def cmd_serve(args: argparse.Namespace) -> int:
     settings = get_app_settings()
     host = args.host if args.host is not None else settings.host
     port = args.port if args.port is not None else settings.port
+    import errno
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host=host,
-        port=port,
-        reload=args.reload,
-    )
+    try:
+        uvicorn.run(
+            "app.main:app",
+            host=host,
+            port=port,
+            reload=args.reload,
+        )
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            print(f"Port {port} is already in use. Stop the existing server first: Aura down", file=sys.stderr)
+            print(f"Or use another port: Aura serve --port 8001", file=sys.stderr)
+        raise
     return 0
 
 
@@ -68,17 +75,25 @@ def cmd_init_db(_: argparse.Namespace) -> int:
     return 0
 
 
+def _backend_root() -> Path:
+    """Agent-Backend repo root (parent of app/)."""
+    return Path(__file__).resolve().parent.parent
+
+
 def cmd_test(args: argparse.Namespace) -> int:
-    """Run pytest. With --real-api, load ~/.ai_env.sh and set RUN_REAL_AI_TESTS=1."""
+    """Run pytest in Agent-Backend repo. With --real-api, load ~/.ai_env.sh and set RUN_REAL_AI_TESTS=1."""
     if args.real_api:
         _load_ai_env()
         os.environ["RUN_REAL_AI_TESTS"] = "1"
+    root = _backend_root()
     cmd = [sys.executable, "-m", "pytest", "tests/", "-v"]
     if args.cov:
         cmd += ["--cov=app", "--cov-report=term-missing"]
+    extra = getattr(args, "pytest_args", None) or []
+    cmd += [a for a in extra if a != "--"]
     if args.real_api and not _env_path().exists():
         print("Warning: --real-api set but", _env_path(), "not found; set DASHSCOPE_API_KEY or create the file.", file=sys.stderr)
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, cwd=root).returncode
 
 
 def cmd_reload_config(args: argparse.Namespace) -> int:
@@ -244,6 +259,7 @@ def main() -> int:
     p_test = sub.add_parser("test", help="Run tests (pytest)")
     p_test.add_argument("--real-api", action="store_true", help="Load ~/.ai_env.sh and run real API integration tests")
     p_test.add_argument("--cov", action="store_true", help="Report coverage")
+    p_test.add_argument("pytest_args", nargs=argparse.REMAINDER, default=[], metavar="[pytest-args...]", help="Extra args passed to pytest (e.g. -v, -x, tests/file.py)")
     p_test.set_defaults(func=cmd_test)
 
     # reload-config
@@ -288,7 +304,9 @@ def main() -> int:
     p_configure = sub.add_parser("configure", help="Create config/app.yaml and config/models.yaml from examples if missing")
     p_configure.set_defaults(func=cmd_configure)
 
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
+    if args.command == "test":
+        args.pytest_args = getattr(args, "pytest_args", []) + unknown
     return args.func(args)
 
 

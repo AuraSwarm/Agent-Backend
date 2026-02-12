@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+RunMode = Literal["node", "docker", "local"]
 
 
 class EmbeddingProviderConfig(BaseModel):
@@ -87,6 +89,8 @@ class AppSettings(BaseModel):
     )
     # Path to shell script to source for API keys (e.g. ~/.ai_env.sh). Empty string = do not load; unset = use ~/.ai_env.sh
     ai_env_path: str | None = Field(None, description="Path to env script for API keys; default ~/.ai_env.sh when unset; set to empty to disable")
+    # Run mode for Aura up/down and ./run: node (default), local (same as node), or docker (compose).
+    run_mode: RunMode = Field("node", description="One-click mode: node | local | docker. node/local = ./run node|local (DB + serve); docker = compose up/down")
     # Options for ./run (local run with DB wait). Env vars (SKIP_DB_WAIT, NO_DB_PASSWORD, USE_LOCAL_POSTGRES, DEV) override these.
     skip_db_wait: bool = Field(False, description="Skip waiting for PostgreSQL at startup (./run)")
     no_db_password: bool = Field(False, description="Use Postgres with no password (trust auth) on localhost:5432")
