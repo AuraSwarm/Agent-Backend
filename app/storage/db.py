@@ -1,113 +1,66 @@
 """
-Database engine, async session factory, and audit logging.
+Database engine, session factory, and audit logging (delegated to memory_base).
 
-- Async engine and session for PostgreSQL (asyncpg).
-- log_audit() for key operations (tool calls, config reload, etc.).
+- Sets default database_url from app config on init_db so routers can use get_session_factory() without passing URL.
+- Ensures app-specific models (e.g. CodeReview) are registered with Base.metadata before init_db.
 """
 
-import uuid
-from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
-from urllib.parse import urlparse
-from uuid import UUID
-
 import structlog
-from sqlalchemy import insert, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from memory_base import set_database_url
+from memory_base.db import (
+    get_engine as _get_engine,
+    get_session_factory as _get_session_factory,
+    init_db as _init_db,
+    log_audit as _log_audit,
+    session_scope as _session_scope,
+)
 
 from app.config.loader import get_app_settings
 
-logger = structlog.get_logger(__name__)
-from app.storage.base import Base
-from app.storage import models  # noqa: F401 - register Session, Message, SessionSummary with Base.metadata
-from app.storage import models_audit  # noqa: F401 - register AuditLog with Base.metadata
-from app.storage.models_audit import AuditLog
+# Import so CodeReview is registered with memory_base.Base.metadata before init_db
+from app.storage import models  # noqa: F401
 
-# Lazy init
-_engine = None
-_session_factory: async_sessionmaker[AsyncSession] | None = None
+logger = structlog.get_logger(__name__)
 
 
 def get_engine():
-    """Create or return async engine; ensure pgvector extension exists."""
-    global _engine
-    if _engine is None:
-        settings = get_app_settings()
-        url = settings.database_url
-        try:
-            parsed = urlparse(url)
-            host_port = parsed.hostname or "localhost"
-            if parsed.port is not None:
-                host_port = f"{host_port}:{parsed.port}"
-        except Exception:
-            host_port = "localhost"
-        logger.info("db_engine_creating", host_port=host_port)
-        _engine = create_async_engine(
-            url,
-            echo=False,
-            pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
-        )
-        logger.info("db_engine_created")
-    return _engine
+    """Create or return async engine (uses default URL set at init)."""
+    _ensure_url()
+    return _get_engine()
+
+
+def get_session_factory():
+    """Return async session factory (uses default URL set at init)."""
+    _ensure_url()
+    return _get_session_factory()
 
 
 async def init_db() -> None:
-    """Create pgvector extension and tables (for init / tests)."""
-    engine = get_engine()
-    logger.info("db_extension_creating", extension="vector")
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-    logger.info("db_tables_creating")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Create pgvector extension and tables. Sets default database_url from app config."""
+    settings = get_app_settings()
+    url = settings.database_url
+    try:
+        host_port = url.split("@", 1)[1].split("/")[0] if "@" in url else "localhost"
+    except Exception:
+        host_port = "localhost"
+    logger.info("db_engine_creating", host_port=host_port)
+    set_database_url(url)
+    await _init_db()
     logger.info("db_init_done")
 
 
-def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """Return async session factory."""
-    global _session_factory
-    if _session_factory is None:
-        _session_factory = async_sessionmaker(
-            get_engine(),
-            class_=AsyncSession,
-            expire_on_commit=False,
-            autoflush=False,
-        )
-    return _session_factory
-
-
-@asynccontextmanager
-async def session_scope() -> AsyncGenerator[AsyncSession, None]:
+def session_scope():
     """Async context manager for a single DB session."""
-    factory = get_session_factory()
-    async with factory() as session:
-        try:
-            yield session
-            await session.commit()
-        except Exception:
-            await session.rollback()
-            raise
+    return _session_scope()
 
 
-async def log_audit(
-    session: AsyncSession,
-    action: str,
-    resource_type: str,
-    resource_id: str | UUID | None = None,
-    details: dict[str, Any] | None = None,
-) -> None:
-    """
-    Write an audit log entry (e.g. tool call, config reload, denied CLI).
-    Caller is responsible for committing the session.
-    """
-    await session.execute(
-        insert(AuditLog.__table__).values(
-            id=uuid.uuid4(),
-            action=action,
-            resource_type=resource_type,
-            resource_id=str(resource_id) if resource_id else None,
-            details=details,
-        )
-    )
+def log_audit(session, action: str, resource_type: str, resource_id=None, details=None):
+    """Write an audit log entry. Caller commits the session."""
+    return _log_audit(session, action, resource_type, resource_id=resource_id, details=details)
+
+
+def _ensure_url() -> None:
+    """Set default database URL from app config if not yet set."""
+    if get_app_settings().database_url:
+        set_database_url(get_app_settings().database_url)
+    # else memory_base will raise when get_engine/get_session_factory are used

@@ -42,6 +42,8 @@ agent-backend --help
 | `agent-backend version` | Print version |
 | `agent-backend try-models` | Call each configured chat model (loads ~/.ai_env.sh if present); report OK or error |
 
+**Testing:** Module tests live in this repo: `agent-backend test` or `pytest tests/`. Overall/integration tests (including running this module’s suite from the launcher) are in **Aura-Swarm** (`pytest tests/` there).
+
 **Run script (`./run`)** – single script for local run with DB and env:
 
 | Invocation | Description |

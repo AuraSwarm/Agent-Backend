@@ -6,9 +6,13 @@ import re
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from app.storage.base import Base
+from memory_base import Base
+
+# Register app-specific models (e.g. CodeReview) with Base.metadata for create_all
+from app.storage import models  # noqa: F401
 
 # Path to shell env file used by real_ai tests (never commit this file's contents)
 AI_ENV_PATH = Path(os.environ.get("AI_ENV_PATH", os.path.expanduser("~/.ai_env.sh")))
@@ -81,6 +85,7 @@ async def db_session():
         pytest.fail("TEST_DATABASE_URL must be set for db_session fixture")
     engine = create_async_engine(url, echo=False)
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with factory() as session:

@@ -1,9 +1,5 @@
-"""SQLAlchemy declarative base."""
+"""Re-export SQLAlchemy base from memory_base."""
 
-from sqlalchemy.orm import DeclarativeBase
+from memory_base.base import Base
 
-
-class Base(DeclarativeBase):
-    """Base for all storage models."""
-
-    pass
+__all__ = ["Base"]

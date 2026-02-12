@@ -80,6 +80,7 @@ None. New endpoints and optional request fields only.
 
 ## Recent updates (this branch)
 
+- **Refactor:** `app/main.py` split into routers: `app/routers/` (health, sessions, chat, tools, code_review). Lifespan in main only; DB init via `app.storage.db.init_db()`. Tests patched to `app.storage.db.*` and `app.routers.*` where applicable.
 - **Code review title:** History titles use **main = repo address** (git remote origin URL or resolved root path) and **subtitle = review mode** (当前变更 / Git commits / 按路径 …). Backend: `_repo_address()`, `_code_review_subtitle()`, `_code_review_title(root)` in `app/routers/code_review.py`.
 - **Web UI:** Review 历史 list renders main title + subtitle (split on ` — `); detail status shows full title then “共 N 个文件, Provider: …”. CSS: `.sidebar-code-reviews .conversation-preview-subtitle`; `.code-review-status` with `white-space: pre-line`.
 - **Code quality (from Copilot/Claude review):** `datetime.utcnow` → `datetime.now(timezone.utc)` in models; `SessionStatus` constants in archive; adapter `_with_retry` with exponential backoff; cloud adapter API key validation (clear error when missing); DB URL parsing via `urllib.parse.urlparse`; chat router logs invalid session_id and returns 503 on missing API key.

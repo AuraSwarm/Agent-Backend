@@ -1,15 +1,17 @@
 """
-FastAPI gateway: lifespan, request logging, static UI, and API routers.
+FastAPI gateway: lifespan, request logging, and API routers.
 
 Routers: health (models, health, admin), sessions, chat, tools, code_review.
+Web UI: when WEB_UI_DIR is set (e.g. by Aura to Web-Service/static), serve / and /static from it.
 """
 
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -18,6 +20,11 @@ from app import storage
 from app.routers import chat, code_review, health, sessions, tools
 
 logger = structlog.get_logger(__name__)
+
+# When Aura sets WEB_UI_DIR to Web-Service/static, serve the web UI from there
+STATIC_DIR = Path(os.environ.get("WEB_UI_DIR", "")).resolve() if os.environ.get("WEB_UI_DIR") else None
+if STATIC_DIR and not STATIC_DIR.is_dir():
+    STATIC_DIR = None
 
 
 @asynccontextmanager
@@ -82,18 +89,15 @@ app.include_router(tools.router)
 app.include_router(code_review.router)
 
 
-# Static web UI
-STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+# Optional web UI (when WEB_UI_DIR is set, e.g. by Aura pointing to Web-Service/static)
+if STATIC_DIR is not None:
+    @app.get("/")
+    async def index():
+        """Serve the chat web UI from WEB_UI_DIR."""
+        index_file = STATIC_DIR / "index.html"
+        if not index_file.exists():
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="Static files not found")
+        return FileResponse(index_file)
 
-
-@app.get("/")
-async def index():
-    """Serve the chat web UI."""
-    index_file = STATIC_DIR / "index.html"
-    if not index_file.exists():
-        raise HTTPException(status_code=404, detail="Static files not found")
-    return FileResponse(index_file)
-
-
-if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

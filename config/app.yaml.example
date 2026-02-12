@@ -1,6 +1,12 @@
 # Application settings. Copy to app.yaml and set values. Do not commit app.yaml with secrets.
 # Use ${VAR} in values to substitute from environment.
 
+# Run mode for Aura up/down and ./run. Optional; default: node
+#   node  - ./run node: start/wait DB, then serve
+#   local - ./run local: same as node
+#   docker - Aura up = docker compose up -d; Aura down = docker compose stop
+# run_mode: node
+
 # Server
 host: "0.0.0.0"
 port: 8000
