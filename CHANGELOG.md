@@ -16,3 +16,7 @@
 ### Added
 
 - **CLI 主入口测试**（`tests/test_cli_main.py`）：覆盖 `main()` 与 `python -m app.cli version`，验证 `version`、`--help`、`serve --help` 行为。
+- **长时记忆存储**：当 `config/app.yaml`（或 Aura 注入的配置）中配置了阿里云 OSS（`oss_endpoint`、`oss_bucket`、`oss_access_key_*`）时，启动时初始化 OSS 作为 Memory-Base 长时存储后端；未配置时使用内存后端。`app.storage.long_term` 提供 `get_long_term_backend()`、`is_long_term_oss()`、`reset_long_term_backend()`（测试用）。
+- **Chat 长时记忆注入**：当 OSS 已配置且请求带 `user_id`（或使用 `session_id`）时，从长时存储加载用户画像与相关知识三元组并作为 system 前缀注入对话。
+- **POST /chat 可选 `user_id`**：用于长时记忆用户维度；详见 API.md。
+- **短/中/长记忆机制测试**（`tests/test_memory_stages.py`）：短期（Session/Message 模型与 DB）、中期（SessionSummary/MessageArchive 与 archive 任务）、长期（backend 从配置创建、profile/knowledge 读写、is_long_term_oss）。

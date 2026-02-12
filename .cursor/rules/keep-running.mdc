@@ -1,0 +1,12 @@
+---
+description: Keep Cursor agent engaged and iterating until ./run works on the node
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Agent-Backend node and ./run
+
+- **Keep running**: When asked to debug or improve agent-backend on this node, stay in the loop: run `./run node` (or `./run local`), observe errors, fix code or config, then run again until the backend starts successfully (PostgreSQL ready and `agent-backend serve` running).
+- **Node vs local**: This repo runs on a Docker node (container). Use `./run node` or default `./run`. Use `./run local` for a real local machine. Both modes try to start PostgreSQL (when database_url is localhost:5432) and retry until the DB is ready.
+- **Config**: Ensure `config/app.yaml` has `database_url` with `localhost:5432` so the script can start Postgres (systemctl, pg_ctl, .local/postgres-data, or Docker/Podman). Server host/port in app.yaml are separate (e.g. port 8000 or 12099).
+- **Do not stop** after one failure: install or fix PostgreSQL, fix script/config, add tests if needed, and re-run until `./run node` completes with "PostgreSQL is ready" and the server is up.

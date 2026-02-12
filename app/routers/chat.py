@@ -15,6 +15,7 @@ from sqlalchemy import insert
 from app.adapters.cloud import CloudAPIAdapter
 from app.config.loader import get_config
 from app.storage.db import get_session_factory, session_scope
+from app.storage.long_term import get_long_term_backend, is_long_term_oss
 from app.storage.models import Message, Session
 
 router = APIRouter(tags=["chat"])
@@ -50,6 +51,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str
     messages: list[ChatMessage]
+    user_id: str | None = None  # Optional; when set and long-term OSS enabled, profile/knowledge are injected
     model: str | None = None
     stream: bool = True
     deep_thinking: bool = False
@@ -102,9 +104,30 @@ def _chat_error_detail(exc: httpx.HTTPStatusError) -> str:
     return msg
 
 
+def _build_long_term_system_prefix(user_id: str, last_user_content: str) -> str:
+    """Load profile and relevant knowledge from long-term storage; return system message prefix."""
+    from memory_base import load_user_profile, retrieve_relevant_knowledge
+
+    backend = get_long_term_backend()
+    parts = []
+    profile = load_user_profile(backend, user_id)
+    if profile:
+        traits = profile.get("traits") or {}
+        if traits:
+            parts.append("用户画像: " + ", ".join(f"{k}={v}" for k, v in traits.items() if v))
+    prompt_for_knowledge = (last_user_content or "").strip()[:200]
+    if prompt_for_knowledge:
+        triples = retrieve_relevant_knowledge(backend, user_id, prompt_for_knowledge, top_k=5)
+        if triples:
+            parts.append("相关知识: " + "; ".join(f"({s},{p},{o})" for s, p, o in triples))
+    if not parts:
+        return ""
+    return "长期记忆:\n" + "\n".join(parts) + "\n\n"
+
+
 @router.post("/chat")
 async def chat(req: ChatRequest):
-    """Stream or non-stream chat completion; optional deep_thinking / deep_research."""
+    """Stream or non-stream chat completion; optional deep_thinking / deep_research; long-term memory when OSS configured."""
     config = get_config()
     chat_providers = getattr(config, "chat_providers", {}) or {}
     default_chat = config.default_chat_provider or "dashscope"
@@ -118,6 +141,14 @@ async def chat(req: ChatRequest):
     )
     messages = [{"role": m.role, "content": m.content} for m in req.messages]
     prompt = req.messages[-1].content if req.messages else ""
+    # Inject long-term memory (profile + knowledge) when using OSS
+    if is_long_term_oss():
+        effective_user_id = (req.user_id or req.session_id).strip()
+        if effective_user_id:
+            last_content = req.messages[-1].content if req.messages else ""
+            prefix = _build_long_term_system_prefix(effective_user_id, last_content)
+            if prefix:
+                messages = [{"role": "system", "content": prefix}] + messages
     extra = {}
     if req.deep_research:
         messages = [{"role": "system", "content": DEEP_RESEARCH_SYSTEM}] + messages

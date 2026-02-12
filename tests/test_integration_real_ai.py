@@ -108,9 +108,10 @@ def _get_chat_adapter():
 @pytest.mark.real_ai
 @pytest.mark.asyncio
 async def test_chat_non_stream(require_real_api_key):
-    """Real API: non-streaming chat returns non-empty text."""
+    """Real API: non-streaming chat returns (content, usage) with non-empty text."""
     adapter = _get_chat_adapter()
-    text = await adapter.call("Say exactly: ok")
+    result = await adapter.call("Say exactly: ok")
+    text = result[0] if isinstance(result, tuple) else result
     assert isinstance(text, str)
     assert len(text.strip()) > 0
 
@@ -136,7 +137,8 @@ async def test_chat_with_messages(require_real_api_key):
     messages = [
         {"role": "user", "content": "Say the number 42 and nothing else."},
     ]
-    text = await adapter.call("Ignore previous. Say 99.", messages=messages)
+    result = await adapter.call("Ignore previous. Say 99.", messages=messages)
+    text = result[0] if isinstance(result, tuple) else result
     assert isinstance(text, str)
     assert len(text.strip()) > 0
 
@@ -211,7 +213,8 @@ async def test_chat_each_model(require_real_api_key, model):
         model=model,
         timeout=60,
     )
-    text = await adapter.call("Say OK")
+    result = await adapter.call("Say OK")
+    text = result[0] if isinstance(result, tuple) else result
     assert isinstance(text, str)
     assert len(text.strip()) > 0
 

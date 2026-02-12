@@ -12,6 +12,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def _make_async_return(value):
+    """Return a callable that returns a fresh coroutine (run in awaiter's loop, not test loop)."""
+    async def _():
+        return value
+    def _call(*args, **kwargs):
+        return _()
+    return _call
+
+
 @pytest.fixture
 def mock_db():
     """Mock DB so app lifespan and routes don't need real Postgres."""
@@ -22,16 +31,16 @@ def mock_db():
     result_mock.fetchall.return_value = []
 
     session_mock = MagicMock()
-    session_mock.execute = AsyncMock(return_value=result_mock)
-    session_mock.commit = AsyncMock(return_value=None)
-    session_mock.rollback = AsyncMock(return_value=None)
+    session_mock.execute = _make_async_return(result_mock)
+    session_mock.commit = _make_async_return(None)
+    session_mock.rollback = _make_async_return(None)
 
     def add_and_assign_id(obj):
         if not getattr(obj, "id", None):
             obj.id = uuid.uuid4()
 
     session_mock.add = add_and_assign_id
-    session_mock.flush = AsyncMock(return_value=None)
+    session_mock.flush = _make_async_return(None)
 
     class Ctx:
         async def __aenter__(self):
@@ -46,9 +55,18 @@ def mock_db():
     factory_mock = MagicMock()
     factory_mock.return_value = Ctx()
 
+    # Patch at storage.db and at each router so all code paths use the mock (routers import at load time)
     with patch("app.storage.db.init_db", side_effect=noop_init_db), patch(
         "app.storage.db.get_session_factory", return_value=factory_mock
-    ), patch("app.storage.db.session_scope", new=session_scope):
+    ), patch("app.storage.db.session_scope", new=session_scope), patch(
+        "app.routers.chat.session_scope", new=session_scope
+    ), patch("app.routers.chat.get_session_factory", return_value=factory_mock), patch(
+        "app.routers.health.session_scope", new=session_scope
+    ), patch("app.routers.health.get_session_factory", return_value=factory_mock), patch(
+        "app.routers.sessions.session_scope", new=session_scope
+    ), patch("app.routers.sessions.get_session_factory", return_value=factory_mock), patch(
+        "app.routers.code_review.session_scope", new=session_scope
+    ), patch("app.routers.code_review.get_session_factory", return_value=factory_mock):
         yield session_mock
 
 

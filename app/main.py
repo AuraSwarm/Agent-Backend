@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config.loader import reload_config, start_config_watcher, validate_required_env
 from app import storage
+from app.storage.long_term import get_long_term_backend
 from app.routers import chat, code_review, health, sessions, tools
 
 logger = structlog.get_logger(__name__)
@@ -56,7 +57,9 @@ async def lifespan(app: FastAPI):
         logger.info("config_reloaded", path=path)
 
     start_config_watcher(on_config_change)
-    logger.info("config_watcher_started")
+    # Initialize long-term memory backend (OSS when configured via Aura, else in-memory)
+    get_long_term_backend()
+    logger.info("long_term_storage_ready")
     logger.info("application_ready")
     yield
     logger.info("shutdown_start")

@@ -1,0 +1,8 @@
+#!/bin/sh
+# post-merge: 在 git pull 成功后执行，用于长线迭代更新（如刷新索引、同步规则等）
+# 可在此追加项目需要的自动化步骤
+
+# 示例：拉取后提示规则与 hook 已更新（可按需取消注释）
+# echo "[Agent-Backend] 已拉取最新变更，.cursor/rules 与 hooks 如有更新请留意。"
+
+exit 0

@@ -80,6 +80,11 @@ class AppSettings(BaseModel):
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "archives"
+    # 阿里云 OSS (Memory-Base 长期存储，可选)
+    oss_endpoint: str | None = Field(None, description="Aliyun OSS endpoint, e.g. https://oss-cn-hangzhou.aliyuncs.com")
+    oss_access_key_id: str | None = Field(None, description="Aliyun OSS AccessKey ID")
+    oss_access_key_secret: str | None = Field(None, description="Aliyun OSS AccessKey Secret")
+    oss_bucket: str | None = Field(None, description="OSS bucket name for long-term storage")
     config_dir: str = Field(default="config", description="Directory containing app.yaml and models.yaml; CONFIG_DIR env overrides when loading.")
     # API key can be set in YAML or via ${DASHSCOPE_API_KEY}; if set here it is applied to os.environ at load
     dashscope_api_key: str | None = None
