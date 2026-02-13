@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>主对话 - AI 员工协作中心</title>
+  <link rel="stylesheet" href="/team/style.css">
+</head>
+<body>
+  <div class="container">
+    <aside class="sidebar">
+      <nav class="sidebar-nav" aria-label="功能导航">
+        <a href="/team/">任务中心</a>
+        <a href="/team/admin/roles.html">员工角色管理</a>
+        <a href="/team/admin/abilities.html">能力管理</a>
+        <a href="/team/admin/models.html">模型管理</a>
+      </nav>
+      <h2 class="sidebar-section-title">对话</h2>
+      <div class="task-list-toolbar">
+        <button type="button" id="btn-new-chat" class="btn-primary btn-sm" title="新对话">新对话</button>
+      </div>
+      <div id="chat-session-list" class="task-list-wrap" aria-live="polite">
+        <p id="chat-list-loading" class="loading-inline">加载中…</p>
+      </div>
+    </aside>
+    <main class="main-content">
+      <div class="chat-intro-header">
+        <h1>主对话</h1>
+        <p class="form-hint">对话与任务独立管理。在左侧新建对话或选择一条对话查看；可将对话「转为任务」后在任务中心继续跟进。</p>
+      </div>
+      <div id="chat-main" class="chat-main-placeholder" aria-live="polite">
+        <div class="empty-state empty-state-main">
+          <div class="empty-state-icon" aria-hidden="true">💬</div>
+          <p class="empty-state-lead">从左侧选择一条对话</p>
+          <p class="empty-state-hint">或点击「新建对话」开始；选择对话后可在此查看消息，并可使用「转为任务」将该对话加入任务中心。</p>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="/team/chat.js"></script>
+</body>
+</html>

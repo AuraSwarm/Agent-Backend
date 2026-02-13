@@ -193,7 +193,7 @@ def client_task_center(task_center_state):
 
 # --- Page load tests ---
 def test_team_index_page_loads(client: TestClient):
-    """GET /team/ 返回 200，HTML 包含任务中心所需元素（与 index.html 一致）。"""
+    """GET /team/ 返回 200，HTML 包含任务中心所需元素与子页面 Tab 栏。"""
     r = client.get("/team/")
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
@@ -203,6 +203,9 @@ def test_team_index_page_loads(client: TestClient):
     assert "chat-container" in html
     assert "user-input" in html
     assert "send-btn" in html
+    assert "content-tabs" in html
+    assert "Task" in html and "Role" in html and "Ability" in html
+    assert "任务中心" in html or "task-list" in html
     assert "/team/script.js" in html
     assert "/api/tasks" in html or "script.js" in html
 
@@ -222,11 +225,12 @@ def test_team_admin_roles_page_loads(client: TestClient):
     assert "/api/admin/roles" in html or "admin-roles.js" in html
     assert "任务中心" in html
     assert "员工角色" in html
+    assert "content-tabs" in html
 
 
 def test_team_static_assets_available(client: TestClient):
-    """静态资源可访问：style.css, script.js, admin-roles.js。"""
-    for path in ["/team/style.css", "/team/script.js", "/team/admin/admin-roles.js"]:
+    """静态资源可访问：style.css, script.js, admin-roles.js, admin-models.js。"""
+    for path in ["/team/style.css", "/team/script.js", "/team/admin/admin-roles.js", "/team/admin/admin-models.js"]:
         r = client.get(path)
         assert r.status_code == 200, f"GET {path} should be 200"
     r_css = client.get("/team/style.css")
@@ -252,18 +256,23 @@ def test_team_script_uses_expected_api_paths(client: TestClient):
 
 
 def test_team_admin_script_uses_expected_api_paths(client: TestClient):
-    """角色管理 admin-roles.js 调用的 API 路径存在。"""
+    """角色管理 admin-roles.js 调用的 API 路径存在（含 /api/models 供绑定模型）。"""
     r = client.get("/team/admin/admin-roles.js")
     assert r.status_code == 200
     js = r.text
     assert "/api/admin/roles" in js
     assert "/api/abilities" in js
+    assert "/api/models" in js
     list_roles = client.get("/api/admin/roles")
     list_abilities = client.get("/api/abilities")
+    list_models = client.get("/api/models")
     assert list_roles.status_code == 200
     assert list_abilities.status_code == 200
+    assert list_models.status_code == 200
     assert isinstance(list_roles.json(), list)
     assert isinstance(list_abilities.json(), list)
+    models_data = list_models.json()
+    assert "models" in models_data and "default" in models_data
 
 
 # --- UI flow: task center (requires one session) ---
@@ -366,7 +375,7 @@ def test_team_navigation_links(client: TestClient):
 
 
 def test_team_role_form_has_all_inputs(client: TestClient):
-    """角色管理弹窗表单包含新建/编辑所需全部输入（与 admin-roles.js 一致）。"""
+    """角色管理弹窗表单包含新建/编辑所需全部输入（含绑定模型，与 admin-roles.js 一致）。"""
     r = client.get("/team/admin/roles.html")
     assert r.status_code == 200
     html = r.text
@@ -374,7 +383,40 @@ def test_team_role_form_has_all_inputs(client: TestClient):
     assert "id=\"role-description\"" in html
     assert "id=\"role-status\"" in html
     assert "id=\"role-abilities\"" in html
+    assert "id=\"role-model\"" in html
     assert "id=\"role-prompt\"" in html
     assert "id=\"role-form\"" in html
     assert "id=\"create-role-btn\"" in html
     assert "id=\"role-modal\"" in html
+
+
+def test_team_admin_models_page_loads(client: TestClient):
+    """GET /team/admin/models.html 返回 200，包含模型管理所需元素。"""
+    r = client.get("/team/admin/models.html")
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+    html = r.text
+    assert "模型管理" in html
+    assert "id=\"models-list\"" in html
+    assert "id=\"models-test-btn\"" in html
+    assert "/api/models" in html or "admin-models.js" in html
+    assert "任务中心" in html
+    assert "员工角色" in html
+
+
+def test_team_admin_models_script_and_api(client: TestClient):
+    """模型管理页使用的 API：GET /api/models、POST /api/admin/models/test、PUT /api/admin/models/default 存在且返回预期结构。"""
+    r_models = client.get("/api/models")
+    assert r_models.status_code == 200
+    data = r_models.json()
+    assert "models" in data and "default" in data
+    assert isinstance(data["models"], list)
+    r_test = client.post("/api/admin/models/test")
+    assert r_test.status_code == 200
+    test_data = r_test.json()
+    assert "results" in test_data
+    assert isinstance(test_data["results"], list)
+    r_set_default = client.put("/api/admin/models/default", json={"model": "invalid-not-in-list"})
+    assert r_set_default.status_code == 400
+    r_set_default = client.put("/api/admin/models/default", json={"model": "invalid-not-in-list"})
+    assert r_set_default.status_code == 400

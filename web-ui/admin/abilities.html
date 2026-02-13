@@ -7,22 +7,33 @@
   <link rel="stylesheet" href="/team/style.css">
 </head>
 <body>
+  <script>if (window.location.search.indexOf('embed=1') !== -1) document.body.classList.add('embed');</script>
   <div class="container">
-    <aside class="sidebar">
-      <nav class="sidebar-nav" aria-label="功能导航">
-        <a href="/">返回主对话</a>
-        <a href="/team/">任务中心</a>
-        <a href="/team/admin/roles.html">员工角色管理</a>
-        <a href="/team/admin/abilities.html" class="active">能力管理</a>
+    <aside class="sidebar sidebar-admin">
+      <nav class="content-tabs content-tabs-vertical" aria-label="Task, Role, Ability, Model">
+        <a href="/team/" class="content-tab" title="任务中心">Task</a>
+        <a href="/team/admin/roles.html" class="content-tab" title="员工角色管理">Role</a>
+        <a href="/team/admin/abilities.html" class="content-tab active" title="能力管理">Ability</a>
+        <a href="/team/admin/models.html" class="content-tab" title="模型管理">Model</a>
       </nav>
     </aside>
     <main class="main-content">
+      <div class="content-tabs" role="tablist" aria-label="Task, Role, Ability, Model">
+        <a href="/team/" class="content-tab" role="tab" title="任务中心">Task</a>
+        <a href="/team/admin/roles.html" class="content-tab" role="tab" title="员工角色管理">Role</a>
+        <a href="/team/admin/abilities.html" class="content-tab active" role="tab" title="能力管理">Ability</a>
+        <a href="/team/admin/models.html" class="content-tab" role="tab" title="模型管理">Model</a>
+      </div>
       <div class="page-header">
         <h1>能力管理</h1>
-        <button type="button" id="ability-create-btn" class="btn-primary">新建能力</button>
+        <div class="page-header-actions">
+          <button type="button" id="ability-repair-btn" class="btn-outline-sm" title="单次修复：为能力表补齐 prompt_template 列（若此前未迁移）">修复</button>
+          <button type="button" id="ability-refresh-btn" class="btn-outline-sm" title="重新加载配置与能力列表，识别 Aura/仓库中新增能力">刷新能力列表</button>
+          <button type="button" id="ability-create-btn" class="btn-primary">新建能力</button>
+        </div>
       </div>
       <div class="ability-page-intro">
-        <p class="ability-page-hint">能力可来自 config（<code>models.yaml</code> 的 <code>local_tools</code>）或在本页新建/编辑（自定义）。自定义能力可与角色绑定，执行时与 config 能力一致。</p>
+        <p class="ability-page-hint">能力可来自 config（<code>models.yaml</code> 的 <code>local_tools</code>）、Aura 的 <code>config/abilities.yaml</code>（ability repo），或在本页新建/编辑（自定义）。在 ability repo 中新增能力后，点击「刷新能力列表」即可在 Web 端联动获取。</p>
       </div>
       <div class="abilities-section">
         <h2 class="abilities-section-title" id="abilities-section-title">能力列表</h2>
@@ -40,6 +51,13 @@
         <button type="button" class="modal-close" id="ability-modal-close" aria-label="关闭">×</button>
       </div>
       <form id="ability-form" class="modal-body">
+        <div class="form-group" id="ability-base-wrap">
+          <label for="ability-base">基于现有能力（可选）</label>
+          <select id="ability-base" aria-label="选择已有能力作为模板，将预填名称、描述与命令">
+            <option value="">— 不基于现有 —</option>
+          </select>
+          <p class="form-hint">新建时可选一条已有能力作为模板，再改 ID 保存为新的自定义能力。</p>
+        </div>
         <div class="form-group">
           <label for="ability-id">能力 ID</label>
           <input type="text" id="ability-id" required placeholder="例如 my_tool" pattern="[a-zA-Z0-9_-]+">

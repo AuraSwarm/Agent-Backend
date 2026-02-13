@@ -98,22 +98,86 @@ def get_app_settings() -> AppSettings:
             _app_settings = AppSettings()
         if _app_settings.dashscope_api_key and _app_settings.dashscope_api_key.strip():
             os.environ["DASHSCOPE_API_KEY"] = _app_settings.dashscope_api_key.strip()
+        anth_key = getattr(_app_settings, "anthropic_api_key", None)
+        anth_base = getattr(_app_settings, "anthropic_base_url", None)
+        if anth_key and anth_key.strip():
+            os.environ["ANTHROPIC_API_KEY"] = anth_key.strip()
+        if anth_base and anth_base.strip():
+            os.environ["ANTHROPIC_BASE_URL"] = anth_base.strip()
+        elif anth_key and anth_key.strip():
+            os.environ.setdefault("ANTHROPIC_BASE_URL", "https://gaccode.com/claudecode")
     return _app_settings
+
+
+def _resolve_abilities_file_path(config_dir: str | None) -> Path | None:
+    """
+    Resolve path to ability repo file (Aura config/abilities.yaml).
+    Uses AURA_ABILITIES_FILE env if set; else infers from config_dir when it looks like Aura generated (.aura).
+    """
+    path_str = os.environ.get("AURA_ABILITIES_FILE")
+    if path_str:
+        p = Path(path_str)
+        return p if p.is_absolute() else p.resolve()
+    if config_dir:
+        base = Path(config_dir).resolve()
+        # CONFIG_DIR from Aura is e.g. .../Aura-Swarm/.aura/generated_config -> aura_root = .../Aura-Swarm
+        walk = base
+        while walk != walk.parent:
+            if walk.name == ".aura":
+                return walk.parent / "config" / "abilities.yaml"
+            walk = walk.parent
+    return None
+
+
+def _parse_abilities_yaml(raw: str) -> list[dict[str, Any]]:
+    """Parse abilities from YAML: root list, or root dict with 'abilities' / 'local_tools' key."""
+    data = yaml.safe_load(raw)
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return [a for a in data if isinstance(a, dict) and a.get("id")]
+    if isinstance(data, dict):
+        for key in ("abilities", "local_tools"):
+            val = data.get(key)
+            if isinstance(val, list):
+                return [a for a in val if isinstance(a, dict) and a.get("id")]
+    return []
+
+
+def _merge_aura_abilities_into_data(data: dict[str, Any], config_dir: str | None = None) -> None:
+    """
+    Load ability repo (Aura config/abilities.yaml) and merge into data["local_tools"] by id.
+    Enables web to see abilities from ability repo; path from AURA_ABILITIES_FILE or inferred from CONFIG_DIR.
+    """
+    ab_path = _resolve_abilities_file_path(config_dir)
+    if ab_path is None or not ab_path.exists():
+        return
+    raw = ab_path.read_text(encoding="utf-8")
+    ab_list = _parse_abilities_yaml(raw)
+    if not ab_list:
+        return
+    base_tools = data.get("local_tools") or []
+    by_id: dict[str, Any] = {}
+    for t in base_tools:
+        if isinstance(t, dict) and t.get("id"):
+            by_id[t["id"]] = t
+    for a in ab_list:
+        if isinstance(a, dict) and a.get("id"):
+            by_id[a["id"]] = a
+    data["local_tools"] = list(by_id.values())
 
 
 def load_models_config(config_dir: str | None = None) -> ModelsConfig:
     """
     Load and validate models.yaml from config directory.
+    When AURA_ABILITIES_FILE is set, merges that file's abilities into local_tools (by id)
+    so that Aura 仓库中新增能力 can be recognized after reload without restart.
 
     Args:
         config_dir: Override config directory (default from AppSettings).
 
     Returns:
         Validated ModelsConfig.
-
-    Raises:
-        ValidationError: If YAML is invalid or does not match schema.
-        FileNotFoundError: If config dir does not exist (when strict).
     """
     settings = get_app_settings()
     base = Path(config_dir or settings.config_dir)
@@ -121,6 +185,7 @@ def load_models_config(config_dir: str | None = None) -> ModelsConfig:
     if not path.exists():
         path = base / "models.yaml.example"
     data = _load_yaml(path)
+    _merge_aura_abilities_into_data(data, config_dir=(config_dir or getattr(settings, "config_dir", None)))
     return ModelsConfig.model_validate(data)
 
 
@@ -149,6 +214,44 @@ def reload_config(config_dir: str | None = None) -> ModelsConfig:
     new_config = load_models_config(config_dir=config_dir)
     _models_config = new_config
     return _models_config
+
+
+def update_default_chat_model(model_id: str, config_dir: str | None = None) -> str:
+    """
+    Set the default chat model in models.yaml and reload config.
+
+    Args:
+        model_id: Model ID (must be in the default provider's models list).
+        config_dir: Optional override for config directory.
+
+    Returns:
+        The new default model id.
+
+    Raises:
+        ValueError: If models.yaml missing, provider missing, or model_id not allowed.
+    """
+    settings = get_app_settings()
+    base = Path(config_dir or settings.config_dir).resolve()
+    path = base / "models.yaml"
+    if not path.exists():
+        raise ValueError("config/models.yaml not found; cannot update default model")
+    raw = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(raw) or {}
+    providers = data.get("chat_providers") or {}
+    default_name = data.get("default_chat_provider") or "dashscope"
+    if default_name not in providers:
+        raise ValueError("default chat provider not configured")
+    prov = providers[default_name]
+    allowed = prov.get("models") or [prov.get("model", "")]
+    if model_id not in allowed:
+        raise ValueError(f"model {model_id!r} must be one of: {allowed}")
+    prov["model"] = model_id
+    path.write_text(
+        yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
+    reload_config(config_dir=config_dir or settings.config_dir)
+    return model_id
 
 
 def start_config_watcher(callback: Callable[[str, str], None]) -> None:

@@ -52,6 +52,15 @@ async def lifespan(app: FastAPI):
             ) from e
         raise
 
+    # 历史角色适配：为所有已有角色补齐必备的「对话」能力
+    try:
+        from app.routers.team_admin import ensure_all_roles_have_chat_ability
+        n = await ensure_all_roles_have_chat_ability()
+        if n:
+            logger.info("roles_migrated_chat_ability", count=n)
+    except Exception as e:
+        logger.warning("roles_migrate_chat_ability_skipped", error=str(e))
+
     def on_config_change(_event: str, path: str) -> None:
         reload_config()
         logger.info("config_reloaded", path=path)

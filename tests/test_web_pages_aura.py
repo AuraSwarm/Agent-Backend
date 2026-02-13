@@ -53,8 +53,8 @@ def test_aura_task_center_page_appearance(client: TestClient):
     assert "task-title" in html
     assert "user-input" in html
     assert "send-btn" in html
-    assert "返回主对话" in html
-    assert "员工角色" in html or "roles" in html
+    assert "content-tabs" in html
+    assert "员工角色管理" in html or "员工角色" in html or "roles" in html
     assert "清空消息" in html or "删除任务" in html or "task-actions" in html
 
 
@@ -79,7 +79,7 @@ def test_aura_roles_page_appearance(client: TestClient):
     assert "role-form" in html
     assert "role-name" in html
     assert "role-prompt" in html
-    assert "返回主对话" in html
+    assert "content-tabs" in html
     assert "任务中心" in html
 
 

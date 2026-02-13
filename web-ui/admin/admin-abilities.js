@@ -27,10 +27,24 @@
   var abilityModal = document.getElementById('ability-modal');
   var abilityForm = document.getElementById('ability-form');
   var editingId = null;
+  var lastAbilitiesList = [];
 
   function openAbilityModal(isNew) {
     editingId = isNew ? null : null;
     document.getElementById('ability-modal-title').textContent = isNew ? '新建能力' : '编辑能力';
+    var baseWrap = document.getElementById('ability-base-wrap');
+    baseWrap.style.display = isNew ? 'block' : 'none';
+    var baseSelect = document.getElementById('ability-base');
+    baseSelect.innerHTML = '<option value="">— 不基于现有 —</option>';
+    if (isNew && lastAbilitiesList.length) {
+      lastAbilitiesList.forEach(function (a) {
+        var opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = (a.name || a.id) + ' (' + a.id + ')';
+        baseSelect.appendChild(opt);
+      });
+    }
+    baseSelect.value = '';
     document.getElementById('ability-id').value = '';
     document.getElementById('ability-id').readOnly = !isNew;
     document.getElementById('ability-id').disabled = !isNew;
@@ -40,6 +54,18 @@
     abilityModal.classList.add('is-open');
     abilityModal.style.display = 'flex';
     abilityModal.setAttribute('aria-hidden', 'false');
+  }
+
+  function onAbilityBaseChange() {
+    var baseSelect = document.getElementById('ability-base');
+    var id = baseSelect.value;
+    if (!id) return;
+    var a = lastAbilitiesList.find(function (x) { return x.id === id; });
+    if (!a) return;
+    document.getElementById('ability-name').value = a.name || '';
+    document.getElementById('ability-description').value = a.description || '';
+    var cmd = a.command;
+    document.getElementById('ability-command').value = Array.isArray(cmd) ? cmd.join('\n') : (cmd || '');
   }
 
   function closeAbilityModal() {
@@ -160,6 +186,7 @@
     }
 
     var abilities = await abilitiesRes.json();
+    lastAbilitiesList = abilities;
     var roles = await rolesRes.json();
     var abToRoles = abilityToRoles(roles);
 
@@ -216,8 +243,44 @@
     });
   }
 
+  async function refreshAbilitiesList() {
+    var btn = document.getElementById('ability-refresh-btn');
+    btn.disabled = true;
+    btn.textContent = '刷新中…';
+    var r = await fetch('/admin/reload', { method: 'POST' });
+    btn.disabled = false;
+    btn.textContent = '刷新能力列表';
+    if (!r.ok) {
+      alert('刷新失败，请重试');
+      return;
+    }
+    await loadAbilities();
+  }
+
+  async function repairPromptTemplate() {
+    var btn = document.getElementById('ability-repair-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    var origText = btn.textContent;
+    btn.textContent = '修复中…';
+    var r = await fetch('/api/admin/migrate-prompt-template', { method: 'POST' });
+    btn.disabled = false;
+    btn.textContent = origText;
+    var body = {};
+    try { body = await r.json(); } catch (_) {}
+    if (r.ok) {
+      alert((body.detail || body.message || '修复完成') + '\n可点击「刷新能力列表」重新加载。');
+      await loadAbilities();
+    } else {
+      alert('修复失败: ' + (body.detail || r.statusText || r.status));
+    }
+  }
+
+  document.getElementById('ability-repair-btn').addEventListener('click', repairPromptTemplate);
+  document.getElementById('ability-refresh-btn').addEventListener('click', refreshAbilitiesList);
   document.getElementById('ability-create-btn').addEventListener('click', function () { openAbilityModal(true); });
   document.getElementById('ability-modal-close').addEventListener('click', closeAbilityModal);
+  document.getElementById('ability-base').addEventListener('change', onAbilityBaseChange);
   abilityModal.addEventListener('click', function (e) {
     if (e.target === abilityModal) closeAbilityModal();
   });

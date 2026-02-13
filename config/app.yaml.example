@@ -36,6 +36,12 @@ config_dir: "config"
 # dashscope_api_key: "sk-xxx"
 # dashscope_api_key: "${DASHSCOPE_API_KEY}"
 
+# Anthropic (Claude). Used when chat_providers.anthropic is configured in models.yaml.
+# Set here or use ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL in environment.
+# anthropic_base_url: "https://gaccode.com/claudecode"
+# anthropic_api_key: "<your-token>"
+# anthropic_api_key: "${ANTHROPIC_API_KEY}"
+
 # If dashscope_api_key is not set above, these env vars are required at startup
 required_env_vars:
   - DASHSCOPE_API_KEY

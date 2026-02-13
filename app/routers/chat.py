@@ -22,6 +22,11 @@ router = APIRouter(tags=["chat"])
 
 logger = structlog.get_logger(__name__)
 
+
+def _is_task_session(s) -> bool:
+    """True if session is a task (metadata.is_task). 对话与任务分离，POST /chat 仅限对话。"""
+    return bool((getattr(s, "metadata_", None) or {}).get("is_task"))
+
 DEEP_THINKING_SYSTEM = (
     "你是一位资深专家，需要对问题进行深度思考。请严格按以下步骤输出：\n"
     "1. 分析问题背景和核心矛盾\n"
@@ -127,7 +132,18 @@ def _build_long_term_system_prefix(user_id: str, last_user_content: str) -> str:
 
 @router.post("/chat")
 async def chat(req: ChatRequest):
-    """Stream or non-stream chat completion; optional deep_thinking / deep_research; long-term memory when OSS configured."""
+    """Stream or non-stream chat completion（仅限对话）。任务反馈请用 POST /api/chat/room/{id}/message。"""
+    try:
+        sid = uuid.UUID(req.session_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="session not found")
+    async with session_scope() as db:
+        r = await db.execute(select(Session).where(Session.id == sid))
+        s = r.scalar_one_or_none()
+        if not s:
+            raise HTTPException(status_code=404, detail="session not found")
+        if _is_task_session(s):
+            raise HTTPException(status_code=404, detail="use POST /api/chat/room/{id}/message for tasks")
     config = get_config()
     chat_providers = getattr(config, "chat_providers", {}) or {}
     default_chat = config.default_chat_provider or "dashscope"

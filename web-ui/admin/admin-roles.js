@@ -34,6 +34,7 @@
       card.innerHTML = '<div class="role-card-inner">' +
         '<div class="role-header"><h3>' + escapeHtml(role.name) + '</h3><span class="role-status ' + role.status + '">' + (role.status === 'enabled' ? '启用' : '禁用') + '</span></div>' +
         '<div class="role-description">' + escapeHtml(role.description || '无描述') + '</div>' +
+        (role.default_model ? '<div class="role-model">模型: ' + escapeHtml(role.default_model) + '</div>' : '') +
         '<div class="role-abilities">' + (role.abilities || []).map(function (a) { return '<span class="ability-tag">' + escapeHtml(a) + '</span>'; }).join('') + '</div>' +
         '</div>' +
         '<button type="button" class="role-card-delete" aria-label="删除角色" title="删除角色">×</button>';
@@ -56,9 +57,17 @@
   }
 
   async function openRoleEdit(roleName) {
-    var response = await fetch('/api/admin/roles/' + encodeURIComponent(roleName));
+    var url = '/api/admin/roles/' + encodeURIComponent(roleName);
+    var response = await fetch(url);
     if (!response.ok) {
-      alert('加载角色失败，请重试');
+      var detail = '';
+      try {
+        var err = await response.json();
+        detail = (err.detail || response.statusText || String(response.status)).toString();
+      } catch (_) {
+        detail = response.status + ' ' + response.statusText;
+      }
+      alert('加载角色失败: ' + detail + '\n\n若为 404，请确认角色「' + roleName + '」是否存在（名称需完全一致，含空格与大小写）。');
       return;
     }
     var role = await response.json();
@@ -67,24 +76,63 @@
     document.getElementById('role-description').value = role.description || '';
     document.getElementById('role-status').value = role.status || 'enabled';
     document.getElementById('role-prompt').value = role.system_prompt || '';
+    await loadModelsSelect(role.default_model || '');
     await loadAbilitiesSelect(role.abilities || []);
     openModal();
     document.getElementById('modal-title').textContent = '编辑角色: ' + role.name;
   }
 
-  async function loadAbilitiesSelect(selectedIds) {
-    var response = await fetch('/api/abilities');
-    var abilities = await response.json();
-    var select = document.getElementById('role-abilities');
-    select.innerHTML = '';
-    abilities.forEach(function (a) {
+  async function loadModelsSelect(selectedId) {
+    var response = await fetch('/api/models');
+    if (!response.ok) return;
+    var data = await response.json();
+    var select = document.getElementById('role-model');
+    select.innerHTML = '<option value="">（使用全局默认）</option>';
+    (data.models || []).forEach(function (m) {
       var opt = document.createElement('option');
-      opt.value = a.id;
-      opt.textContent = a.name || a.id;
-      if (selectedIds.indexOf(a.id) !== -1) opt.selected = true;
+      opt.value = m;
+      opt.textContent = m;
+      if (m === selectedId) opt.selected = true;
       select.appendChild(opt);
     });
   }
+
+  async function loadAbilitiesSelect(selectedIds) {
+    var response = await fetch('/api/abilities');
+    var abilities = await response.json();
+    var container = document.getElementById('role-abilities-list');
+    container.innerHTML = '';
+    abilities.forEach(function (a) {
+      var label = document.createElement('label');
+      label.className = 'ability-checkbox-item';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.name = 'role-ability';
+      cb.value = a.id;
+      cb.checked = selectedIds.indexOf(a.id) !== -1;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(' ' + (a.name || a.id)));
+      container.appendChild(label);
+    });
+  }
+
+  function getSelectedAbilityIds() {
+    var nodes = document.querySelectorAll('#role-abilities-list input[name="role-ability"]:checked');
+    return Array.from(nodes).map(function (n) { return n.value; });
+  }
+
+  function setAllAbilitiesChecked(checked) {
+    document.querySelectorAll('#role-abilities-list input[name="role-ability"]').forEach(function (cb) {
+      cb.checked = checked;
+    });
+  }
+
+  document.getElementById('role-abilities-select-all').addEventListener('click', function () {
+    setAllAbilitiesChecked(true);
+  });
+  document.getElementById('role-abilities-deselect-all').addEventListener('click', function () {
+    setAllAbilitiesChecked(false);
+  });
 
   function escapeHtml(s) {
     if (!s) return '';
@@ -99,6 +147,7 @@
     document.getElementById('role-prompt').value = '';
     openModal();
     document.getElementById('modal-title').textContent = '新建 AI 员工角色';
+    loadModelsSelect('');
     loadAbilitiesSelect([]);
   });
 
@@ -111,16 +160,19 @@
   document.getElementById('role-form').addEventListener('submit', async function (e) {
     e.preventDefault();
     var isNew = document.getElementById('modal-title').textContent.indexOf('新建') !== -1;
+    var modelEl = document.getElementById('role-model');
+    var defaultModel = modelEl && modelEl.value ? modelEl.value : null;
     var payload = {
       name: document.getElementById('role-name').value,
       description: document.getElementById('role-description').value,
       status: document.getElementById('role-status').value,
-      abilities: Array.from(document.getElementById('role-abilities').selectedOptions).map(function (o) { return o.value; }),
-      system_prompt: document.getElementById('role-prompt').value
+      abilities: getSelectedAbilityIds(),
+      system_prompt: document.getElementById('role-prompt').value,
+      default_model: defaultModel || undefined
     };
     var url = isNew ? '/api/admin/roles' : '/api/admin/roles/' + encodeURIComponent(payload.name);
     var method = isNew ? 'POST' : 'PUT';
-    var body = isNew ? payload : { description: payload.description, status: payload.status, abilities: payload.abilities, system_prompt: payload.system_prompt };
+    var body = isNew ? payload : { description: payload.description, status: payload.status, abilities: payload.abilities, system_prompt: payload.system_prompt, default_model: payload.default_model };
     var response = await fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (response.ok) {
       closeModal();

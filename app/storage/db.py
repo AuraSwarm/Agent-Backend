@@ -3,9 +3,11 @@ Database engine, session factory, and audit logging (delegated to memory_base).
 
 - Sets default database_url from app config on init_db so routers can use get_session_factory() without passing URL.
 - Ensures app-specific models (e.g. CodeReview) are registered with Base.metadata before init_db.
+- Runs app-specific migrations (e.g. custom_abilities.prompt_template) after memory_base init_db.
 """
 
 import structlog
+from sqlalchemy import text
 from memory_base import set_database_url
 from memory_base.db import (
     get_engine as _get_engine,
@@ -46,7 +48,21 @@ async def init_db() -> None:
     logger.info("db_engine_creating", host_port=host_port)
     set_database_url(url)
     await _init_db()
+    await _migrate_custom_abilities_prompt_template()
     logger.info("db_init_done")
+
+
+async def _migrate_custom_abilities_prompt_template() -> None:
+    """Add prompt_template column to custom_abilities if missing (idempotent for existing DBs)."""
+    engine = _get_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text("ALTER TABLE custom_abilities ADD COLUMN IF NOT EXISTS prompt_template TEXT"))
+
+
+async def run_migrate_prompt_template() -> None:
+    """单次修复：为 custom_abilities 表补齐 prompt_template 列（可由 Web 端或脚本调用，幂等）。"""
+    _ensure_url()
+    await _migrate_custom_abilities_prompt_template()
 
 
 def session_scope():

@@ -10,16 +10,50 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 
-from app.config.loader import get_config
+from app.config.loader import get_config, update_default_chat_model
+from app.constants import CHAT_ABILITY_ID
 from app.storage.db import session_scope
 from app.storage.models import CustomAbility
 from memory_base.models_team import EmployeeRole, PromptVersion, RoleAbility
 
+logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api", tags=["team_admin"])
+
+
+async def ensure_all_roles_have_chat_ability() -> int:
+    """历史角色适配：为所有已有角色补齐必备的「对话」能力，返回本次新增绑定的角色数。"""
+    updated = 0
+    async with session_scope() as db:
+        r = await db.execute(select(EmployeeRole.name))
+        role_names = [row[0] for row in r.fetchall()]
+        for role_name in role_names:
+            r_ab = await db.execute(
+                select(RoleAbility).where(
+                    RoleAbility.role_name == role_name,
+                    RoleAbility.ability_id == CHAT_ABILITY_ID,
+                )
+            )
+            if r_ab.scalar_one_or_none() is None:
+                db.add(RoleAbility(role_name=role_name, ability_id=CHAT_ABILITY_ID))
+                updated += 1
+        await db.commit()
+    return updated
+
+
+def _allowed_model_ids() -> list[str]:
+    """可绑定到角色的对话模型 ID 列表（来自 config chat_providers 默认 provider 的 models）。"""
+    config = get_config()
+    providers = getattr(config, "chat_providers", {}) or {}
+    default_name = getattr(config, "default_chat_provider", None) or "dashscope"
+    if default_name not in providers:
+        return []
+    prov = providers[default_name]
+    return list(getattr(prov, "models", None) or [getattr(prov, "model", "")] or [])
 
 
 # --- Schemas ---
@@ -29,6 +63,7 @@ class RoleCreate(BaseModel):
     status: str = "enabled"
     abilities: list[str] = []
     system_prompt: str = ""
+    default_model: str | None = None
 
 
 class RoleUpdate(BaseModel):
@@ -36,6 +71,7 @@ class RoleUpdate(BaseModel):
     status: str | None = None
     abilities: list[str] | None = None
     system_prompt: str | None = None
+    default_model: str | None = None
 
 
 class AbilityCreate(BaseModel):
@@ -43,20 +79,25 @@ class AbilityCreate(BaseModel):
     name: str
     description: str = ""
     command: list[str]
+    prompt_template: str | None = None
 
 
 class AbilityUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     command: list[str] | None = None
+    prompt_template: str | None = None
 
 
 def _config_tool_to_item(t: Any) -> dict[str, Any]:
+    cmd = getattr(t, "command", None)
     return {
         "id": t.id,
         "name": getattr(t, "name", t.id),
         "description": getattr(t, "description", ""),
         "source": "config",
+        "command": cmd if isinstance(cmd, list) else ([cmd] if cmd else []),
+        "prompt_template": getattr(t, "prompt_template", None),
     }
 
 
@@ -66,15 +107,94 @@ def _custom_to_item(row: CustomAbility) -> dict[str, Any]:
         "name": row.name,
         "description": row.description or "",
         "command": row.command,
+        "prompt_template": getattr(row, "prompt_template", None) or None,
         "source": "custom",
+    }
+
+
+@router.get("/models")
+async def list_models() -> dict[str, Any]:
+    """可绑定到角色的对话模型列表（与 GET /models 同源：config chat_providers）。"""
+    config = get_config()
+    providers = getattr(config, "chat_providers", {}) or {}
+    default_name = getattr(config, "default_chat_provider", None) or "dashscope"
+    if default_name not in providers:
+        return {"models": [], "default": None}
+    prov = providers[default_name]
+    models = getattr(prov, "models", None) or [getattr(prov, "model", "")]
+    return {"models": models, "default": getattr(prov, "model", None)}
+
+
+async def _test_one_model(prov: Any, model: str, prompt: str = "Say OK in one word.") -> tuple[str, bool, str]:
+    """Call one model; return (model_id, available, message). On error returns available=False with message."""
+    from app.adapters.cloud import CloudAPIAdapter
+    adapter = CloudAPIAdapter(
+        api_key_env=prov.api_key_env,
+        endpoint=prov.endpoint,
+        model=model,
+        timeout=getattr(prov, "timeout", 60),
+    )
+    result = await adapter.call(prompt, model=model)
+    out = result[0] if isinstance(result, tuple) else result
+    msg = (out or "").strip()[:120]
+    return (model, True, msg or "(empty)")
+
+
+class SetDefaultModelBody(BaseModel):
+    model: str
+
+
+@router.put("/admin/models/default")
+async def set_default_model(body: SetDefaultModelBody) -> dict[str, Any]:
+    """设置默认对话模型（写入 config/models.yaml 并重载配置）。"""
+    allowed = _allowed_model_ids()
+    if body.model not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"default model must be one of: {allowed!r}",
+        )
+    update_default_chat_model(body.model)
+    return {"default": body.model}
+
+
+@router.post("/admin/models/test")
+async def test_models_availability() -> dict[str, Any]:
+    """测试当前配置的对话模型可用性；返回每项 model_id, available, message。供模型管理页使用。"""
+    config = get_config()
+    providers = getattr(config, "chat_providers", {}) or {}
+    default_name = getattr(config, "default_chat_provider", None) or "dashscope"
+    if default_name not in providers:
+        return {"results": [], "message": "no chat provider configured"}
+    prov = providers[default_name]
+    models = getattr(prov, "models", None) or [getattr(prov, "model", "")]
+    results: list[dict[str, Any]] = []
+    prompt = "Say OK in one word."
+    for model in models:
+        try:
+            model_id, available, message = await _test_one_model(prov, model, prompt)
+        except Exception as e:
+            model_id, available, message = model, False, str(e)[:200]
+        results.append({"model_id": model_id, "available": available, "message": message})
+    return {"results": results}
+
+
+def _builtin_chat_ability() -> dict[str, Any]:
+    """对话能力：每个角色必备，内置不可删改。"""
+    return {
+        "id": CHAT_ABILITY_ID,
+        "name": "对话",
+        "description": "与用户进行文字对话",
+        "source": "builtin",
+        "command": [],
+        "prompt_template": None,
     }
 
 
 @router.get("/abilities")
 async def list_abilities() -> list[dict[str, Any]]:
-    """列出能力：config local_tools + 自定义（自定义同 id 覆盖）。含 source 与 command（仅 custom）供前端编辑。"""
+    """列出能力：内置对话 + config local_tools + 自定义（自定义同 id 覆盖）。含 source 与 command（仅 custom）供前端编辑。"""
     config = get_config()
-    by_id: dict[str, dict[str, Any]] = {}
+    by_id: dict[str, dict[str, Any]] = {CHAT_ABILITY_ID: _builtin_chat_ability()}
     for t in getattr(config, "local_tools", None) or []:
         by_id[t.id] = _config_tool_to_item(t)
     async with session_scope() as db:
@@ -89,6 +209,8 @@ async def create_ability(body: AbilityCreate) -> dict[str, str]:
     """新建自定义能力（Web 端）。"""
     if not body.id.strip():
         raise HTTPException(status_code=400, detail="id is required")
+    if body.id.strip() == CHAT_ABILITY_ID:
+        raise HTTPException(status_code=400, detail="Ability id 'chat' is reserved for built-in chat ability")
     async with session_scope() as db:
         r = await db.execute(select(CustomAbility).where(CustomAbility.id == body.id.strip()))
         if r.scalar_one_or_none():
@@ -99,6 +221,7 @@ async def create_ability(body: AbilityCreate) -> dict[str, str]:
                 name=body.name.strip(),
                 description=body.description.strip(),
                 command=body.command,
+                prompt_template=(body.prompt_template or "").strip() or None,
             )
         )
         await db.commit()
@@ -107,7 +230,9 @@ async def create_ability(body: AbilityCreate) -> dict[str, str]:
 
 @router.get("/abilities/{ability_id}")
 async def get_ability(ability_id: str) -> dict[str, Any]:
-    """获取单条能力（用于编辑）。config 来源无 command 时前端只读。"""
+    """获取单条能力（用于编辑）。内置对话能力只读；config 来源无 command 时前端只读。"""
+    if ability_id == CHAT_ABILITY_ID:
+        return _builtin_chat_ability()
     config = get_config()
     by_id: dict[str, dict[str, Any]] = {}
     for t in getattr(config, "local_tools", None) or []:
@@ -124,7 +249,9 @@ async def get_ability(ability_id: str) -> dict[str, Any]:
 
 @router.put("/abilities/{ability_id}")
 async def update_ability(ability_id: str, body: AbilityUpdate) -> dict[str, str]:
-    """更新自定义能力（仅 DB 中的可更新）。"""
+    """更新自定义能力（仅 DB 中的可更新）。内置对话能力不可更新。"""
+    if ability_id == CHAT_ABILITY_ID:
+        raise HTTPException(status_code=400, detail="Built-in chat ability cannot be updated")
     async with session_scope() as db:
         r = await db.execute(select(CustomAbility).where(CustomAbility.id == ability_id))
         row = r.scalar_one_or_none()
@@ -136,13 +263,17 @@ async def update_ability(ability_id: str, body: AbilityUpdate) -> dict[str, str]
             row.description = body.description.strip()
         if body.command is not None:
             row.command = body.command
+        if body.prompt_template is not None:
+            row.prompt_template = (body.prompt_template or "").strip() or None
         await db.commit()
     return {"message": "Ability updated"}
 
 
 @router.delete("/abilities/{ability_id}")
 async def delete_ability(ability_id: str) -> dict[str, str]:
-    """删除自定义能力（仅 DB 中的可删除）。"""
+    """删除自定义能力（仅 DB 中的可删除）。内置对话能力不可删除。"""
+    if ability_id == CHAT_ABILITY_ID:
+        raise HTTPException(status_code=400, detail="Built-in chat ability cannot be deleted")
     async with session_scope() as db:
         r = await db.execute(select(CustomAbility).where(CustomAbility.id == ability_id))
         if not r.scalar_one_or_none():
@@ -163,11 +294,14 @@ async def list_roles() -> list[dict[str, Any]]:
         for role in roles:
             r_ab = await db.execute(select(RoleAbility.ability_id).where(RoleAbility.role_name == role.name))
             abilities = [row[0] for row in r_ab.fetchall()]
+            if CHAT_ABILITY_ID not in abilities:
+                abilities = [CHAT_ABILITY_ID] + abilities
             out.append({
                 "name": role.name,
                 "description": role.description or "",
                 "status": role.status,
                 "abilities": abilities,
+                "default_model": getattr(role, "default_model", None),
             })
         return out
 
@@ -179,11 +313,17 @@ async def get_role(role_name: str) -> dict[str, Any]:
         r = await db.execute(select(EmployeeRole).where(EmployeeRole.name == role_name))
         role = r.scalar_one_or_none()
         if not role:
+            logger.warning("get_role_not_found", role_name=role_name, role_name_repr=repr(role_name))
             raise HTTPException(status_code=404, detail="Role not found")
         r_ab = await db.execute(select(RoleAbility.ability_id).where(RoleAbility.role_name == role_name))
         abilities = [row[0] for row in r_ab.fetchall()]
+        if CHAT_ABILITY_ID not in abilities:
+            abilities = [CHAT_ABILITY_ID] + abilities
         r_pv = await db.execute(
-            select(PromptVersion).where(PromptVersion.role_name == role_name).order_by(PromptVersion.version.desc())
+            select(PromptVersion)
+            .where(PromptVersion.role_name == role_name)
+            .order_by(PromptVersion.version.desc())
+            .limit(1)
         )
         latest = r_pv.scalar_one_or_none()
         return {
@@ -192,12 +332,19 @@ async def get_role(role_name: str) -> dict[str, Any]:
             "status": role.status,
             "abilities": abilities,
             "system_prompt": latest.content if latest else "",
+            "default_model": getattr(role, "default_model", None),
         }
 
 
 @router.post("/admin/roles")
 async def create_role(body: RoleCreate) -> dict[str, str]:
-    """创建新角色（含能力绑定与初始提示词版本）。"""
+    """创建新角色（含能力绑定、可选绑定模型与初始提示词版本）。"""
+    allowed = _allowed_model_ids()
+    if body.default_model and body.default_model not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"default_model must be one of: {allowed!r}",
+        )
     async with session_scope() as db:
         r = await db.execute(select(EmployeeRole).where(EmployeeRole.name == body.name))
         if r.scalar_one_or_none():
@@ -206,6 +353,7 @@ async def create_role(body: RoleCreate) -> dict[str, str]:
             name=body.name,
             description=body.description,
             status=body.status,
+            default_model=body.default_model or None,
         )
         db.add(role)
         for ability_id in body.abilities:
@@ -224,7 +372,14 @@ async def create_role(body: RoleCreate) -> dict[str, str]:
 
 @router.put("/admin/roles/{role_name}")
 async def update_role(role_name: str, body: RoleUpdate) -> dict[str, str]:
-    """更新角色（描述、状态、能力、提示词）；提示词会新增版本。"""
+    """更新角色（描述、状态、能力、绑定模型、提示词）；提示词会新增版本。"""
+    if body.default_model is not None:
+        allowed = _allowed_model_ids()
+        if body.default_model and body.default_model not in allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"default_model must be one of: {allowed!r}",
+            )
     async with session_scope() as db:
         r = await db.execute(select(EmployeeRole).where(EmployeeRole.name == role_name))
         role = r.scalar_one_or_none()
@@ -234,13 +389,18 @@ async def update_role(role_name: str, body: RoleUpdate) -> dict[str, str]:
             role.description = body.description
         if body.status is not None:
             role.status = body.status
+        if body.default_model is not None:
+            role.default_model = body.default_model or None
         if body.abilities is not None:
             await db.execute(delete(RoleAbility).where(RoleAbility.role_name == role_name))
             for ability_id in body.abilities:
                 db.add(RoleAbility(role_name=role_name, ability_id=ability_id))
         if body.system_prompt is not None:
             r_pv = await db.execute(
-                select(PromptVersion).where(PromptVersion.role_name == role_name).order_by(PromptVersion.version.desc())
+                select(PromptVersion)
+                .where(PromptVersion.role_name == role_name)
+                .order_by(PromptVersion.version.desc())
+                .limit(1)
             )
             last = r_pv.scalar_one_or_none()
             next_version = (last.version + 1) if last else 1
@@ -269,3 +429,18 @@ async def delete_role(role_name: str) -> dict[str, str]:
         await db.execute(delete(EmployeeRole).where(EmployeeRole.name == role_name))
         await db.commit()
     return {"message": "Role deleted"}
+
+
+@router.post("/admin/roles/ensure-chat-ability")
+async def ensure_chat_ability_for_all_roles() -> dict[str, Any]:
+    """历史角色适配：为所有已有角色补齐必备的「对话」能力（未绑定则写入）。返回本次新增绑定的角色数。"""
+    updated = await ensure_all_roles_have_chat_ability()
+    return {"message": "OK", "updated": updated}
+
+
+@router.post("/admin/migrate-prompt-template")
+async def migrate_prompt_template() -> dict[str, Any]:
+    """单次修复：为 custom_abilities 表补齐 prompt_template 列（幂等，可重复执行）。供 Web 端「修复」按钮或脚本调用。"""
+    from app.storage.db import run_migrate_prompt_template
+    await run_migrate_prompt_template()
+    return {"message": "OK", "detail": "custom_abilities.prompt_template 已就绪"}

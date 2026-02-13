@@ -8,6 +8,11 @@
 - **API-only 默认行为**：未设置 `WEB_UI_DIR` 时，`GET /` 返回 404；Web UI 需单独访问 Web-Service（或由 Aura 注入 `WEB_UI_DIR`）。
 - **EADDRINUSE 提示**：`serve` 在端口被占用时（errno 98）打印提示：先执行 `Aura down` 或使用 `--port` 指定其他端口。
 
+### Fixed
+
+- **GET /api/admin/roles/{role_name}**：查询最新提示词时对 `PromptVersion` 加 `.limit(1)`，避免多版本时 `MultipleResultsFound` 导致 500。
+- **任务房间回复**：后台 `_process_task_and_reply` 异常时记录日志并写入一条 assistant 错误提示，避免无反馈。
+
 ### Removed
 
 - `static/` 目录及 `index.html`、`app.js`、`style.css`。
@@ -20,3 +25,8 @@
 - **Chat 长时记忆注入**：当 OSS 已配置且请求带 `user_id`（或使用 `session_id`）时，从长时存储加载用户画像与相关知识三元组并作为 system 前缀注入对话。
 - **POST /chat 可选 `user_id`**：用于长时记忆用户维度；详见 API.md。
 - **短/中/长记忆机制测试**（`tests/test_memory_stages.py`）：短期（Session/Message 模型与 DB）、中期（SessionSummary/MessageArchive 与 archive 任务）、长期（backend 从配置创建、profile/knowledge 读写、is_long_term_oss）。
+- **任务与角色对话**：任务房间 `POST /api/chat/room/{id}/message` 支持 @ 角色；仅当消息 @ 到有效角色时触发角色回复（对话能力）。`GET /api/chat/room/{id}/messages` 返回 `mentioned_roles`、`reply_by_role`（assistant 消息显示由哪个角色回复）。
+- **对话能力为角色必备**：内置能力 `chat`（对话），每个角色列表与回复流程均包含；启动与 `POST /api/admin/roles/ensure-chat-ability` 可为历史角色补齐该能力。
+- **能力 prompt_template**：自定义能力支持 `prompt_template`（提示词能力）；任务房间可识别并执行。`custom_abilities` 表迁移：启动与 `POST /api/admin/migrate-prompt-template` 或 Web 端「修复」按钮可补齐 `prompt_template` 列。
+- **@ 解析支持空格**：@ 提及支持角色名含空格（如 `@Claude Analyst`），正则 `@([a-zA-Z0-9_]+(?:\s[a-zA-Z0-9_]+)*)`。
+- **任务房间回复与前端**：回复失败时写入一条 assistant 错误提示；前端发送 @ 消息后轮询直至收到助手回复，并显示「正在回答中」占位与对应角色名。

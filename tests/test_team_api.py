@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 
 from memory_base.models_team import EmployeeRole, PromptVersion, RoleAbility
 
+from app.storage.models import CustomAbility
+
 
 def _make_async_return(value):
     async def _():
@@ -121,12 +123,13 @@ def stateful_mock_db():
 
 def _full_stateful_session_scope(store: dict):
     """
-    Session scope for full CRUD: roles, abilities, prompts.
-    store = {"roles": {}, "abilities": {}, "prompts": {}}
+    Session scope for full CRUD: roles, abilities, prompts, custom_abilities.
+    store = {"roles": {}, "abilities": {}, "prompts": {}, "custom_abilities": {}}
     """
     roles = store["roles"]
     abilities = store["abilities"]
     prompts = store["prompts"]
+    custom_abilities = store.setdefault("custom_abilities", {})
 
     def _table_name(stmt):
         try:
@@ -198,6 +201,19 @@ def _full_stateful_session_scope(store: dict):
                 result.fetchall.return_value = []
                 result.scalars.return_value.all.return_value = []
                 return result
+
+            if table_name == "custom_abilities":
+                ab_id = _param_value(stmt)
+                result = MagicMock()
+                if ab_id is not None:
+                    row = custom_abilities.get(ab_id)
+                    result.scalar_one_or_none.return_value = row
+                    result.scalars.return_value.all.return_value = [row] if row else []
+                else:
+                    result.scalar_one_or_none.return_value = None
+                    result.scalars.return_value.all.return_value = list(custom_abilities.values())
+                result.fetchall.return_value = []
+                return result
         except Exception:
             pass
         result = MagicMock()
@@ -213,6 +229,14 @@ def _full_stateful_session_scope(store: dict):
             abilities.setdefault(obj.role_name, []).append(obj.ability_id)
         elif type(obj) is PromptVersion:
             prompts.setdefault(obj.role_name, []).append((obj.version, obj.content))
+        elif type(obj) is CustomAbility:
+            row = MagicMock()
+            row.id = obj.id
+            row.name = obj.name
+            row.description = obj.description or ""
+            row.command = getattr(obj, "command", [])
+            row.prompt_template = getattr(obj, "prompt_template", None)
+            custom_abilities[obj.id] = row
 
     class Ctx:
         async def __aenter__(self):
@@ -281,6 +305,32 @@ def test_api_tasks(client):
     assert r.status_code == 200
     data = r.json()
     assert isinstance(data, list)
+
+
+def test_api_tasks_create_independent(client):
+    """POST /api/tasks 可独立创建任务，不依赖 chat；返回与 GET 单项相同结构。"""
+    r = client.post("/api/tasks", json={})
+    assert r.status_code == 200
+    data = r.json()
+    assert "id" in data
+    assert "title" in data
+    assert "status" in data
+    assert "last_updated" in data
+    assert data["title"] == "未命名任务"
+    assert data["status"] in ("in_progress", "completed")
+    assert isinstance(data["id"], str) and len(data["id"]) > 0
+
+    r2 = client.post("/api/tasks", json={"title": " 独立任务标题 "})
+    assert r2.status_code == 200
+    d2 = r2.json()
+    assert d2["title"] == "独立任务标题"
+    assert isinstance(d2["id"], str) and len(d2["id"]) > 0
+
+
+def test_api_tasks_delete_404(client):
+    """DELETE /api/tasks/{id} 存在：非任务或不存在时返回 404。"""
+    r = client.delete("/api/tasks/00000000-0000-0000-0000-000000000001")
+    assert r.status_code == 404
 
 
 def test_api_abilities(client):
@@ -410,7 +460,7 @@ def test_api_admin_roles_crud_full_flow(client_full_stateful):
     assert data["name"] == name
     assert data["description"] == "Original"
     assert data["status"] == "enabled"
-    assert data["abilities"] == ["echo"]
+    assert "chat" in data["abilities"] and "echo" in data["abilities"], "role has built-in chat + echo"
     assert "Original prompt" in (data.get("system_prompt") or "")
 
     update_r = client_full_stateful.put(
@@ -428,7 +478,7 @@ def test_api_admin_roles_crud_full_flow(client_full_stateful):
     data2 = get2_r.json()
     assert data2["description"] == "Updated description"
     assert "Updated prompt" in (data2.get("system_prompt") or "")
-    assert set(data2["abilities"]) == {"echo", "date"}
+    assert set(data2["abilities"]) == {"chat", "echo", "date"}, "built-in chat + updated abilities"
 
 
 def test_api_admin_roles_list_after_create(client_full_stateful):
@@ -446,3 +496,310 @@ def test_api_admin_roles_list_after_create(client_full_stateful):
     names = {x["name"] for x in r.json()}
     assert "list_a" in names
     assert "list_b" in names
+
+
+def test_employee_binds_and_uses_multiple_abilities(client_full_stateful):
+    """员工可绑定多种能力，且每种能力均可被正确执行（测试员工对能力的应用）。"""
+    from app.constants import CHAT_ABILITY_ID
+
+    ab_r = client_full_stateful.get("/api/abilities")
+    assert ab_r.status_code == 200
+    all_abilities = [a["id"] for a in ab_r.json()]
+    assert len(all_abilities) >= 1, "config must expose at least one ability (e.g. echo, date)"
+    executable = [a for a in all_abilities if a != CHAT_ABILITY_ID]
+    role_abilities = executable[:2] if len(executable) >= 2 else executable
+
+    role_name = "multi_ability_employee"
+    create_r = client_full_stateful.post(
+        "/api/admin/roles",
+        json={
+            "name": role_name,
+            "description": "员工绑定多种能力",
+            "status": "enabled",
+            "abilities": role_abilities,
+            "system_prompt": "",
+        },
+    )
+    assert create_r.status_code == 200
+
+    get_r = client_full_stateful.get(f"/api/admin/roles/{role_name}")
+    assert get_r.status_code == 200
+    bound = get_r.json().get("abilities") or []
+    assert CHAT_ABILITY_ID in bound, "every role has built-in chat ability"
+    assert set(bound) >= set(role_abilities), "role must expose bound abilities plus chat"
+
+    for ability_id in bound:
+        if ability_id == CHAT_ABILITY_ID:
+            continue
+        if ability_id == "echo":
+            exec_r = client_full_stateful.post(
+                "/tools/execute", json={"tool_id": ability_id, "params": {"message": "ok"}}
+            )
+        else:
+            exec_r = client_full_stateful.post(
+                "/tools/execute", json={"tool_id": ability_id, "params": {}}
+            )
+        assert exec_r.status_code == 200, f"execute {ability_id}: {exec_r.text}"
+        assert exec_r.json().get("returncode") == 0, f"execute {ability_id} should succeed"
+
+
+def test_api_admin_ensure_chat_ability(client_full_stateful):
+    """历史角色适配：POST /api/admin/roles/ensure-chat-ability 可为未绑定对话能力的角色补齐能力。"""
+    client_full_stateful.post(
+        "/api/admin/roles",
+        json={"name": "legacy_role", "description": "历史角色", "status": "enabled", "abilities": ["echo"], "system_prompt": ""},
+    )
+    r = client_full_stateful.post("/api/admin/roles/ensure-chat-ability")
+    assert r.status_code == 200
+    body = r.json()
+    assert "updated" in body
+    get_r = client_full_stateful.get("/api/admin/roles/legacy_role")
+    assert get_r.status_code == 200
+    abilities = get_r.json().get("abilities") or []
+    assert "chat" in abilities, "role must have chat ability after ensure"
+
+
+def test_api_admin_migrate_prompt_template(client):
+    """Web 端修复按钮：POST /api/admin/migrate-prompt-template 执行单次迁移（幂等），返回 200。"""
+    r = client.post("/api/admin/migrate-prompt-template")
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("message") == "OK"
+    assert "detail" in body or "message" in body
+
+
+def test_api_abilities_list_has_schema(client):
+    """GET /api/abilities 每项具备 id、name、description，custom 项含 source、command、prompt_template。"""
+    r = client.get("/api/abilities")
+    assert r.status_code == 200
+    data = r.json()
+    assert isinstance(data, list)
+    for item in data:
+        assert "id" in item and isinstance(item["id"], str)
+        assert "name" in item
+        assert "description" in item
+        if item.get("source") == "custom":
+            assert "command" in item
+            assert "prompt_template" in item
+
+
+def test_api_abilities_create_with_prompt_template(client_full_stateful):
+    """POST /api/abilities 可创建带 prompt_template 的提示词能力；GET 单条返回 prompt_template。"""
+    body = {
+        "id": "prompt_ability_test",
+        "name": "提示词能力测试",
+        "description": "根据用户消息执行 LLM 提示词",
+        "command": ["true"],
+        "prompt_template": "用户请求：{message}。请简要回复。",
+    }
+    r = client_full_stateful.post("/api/abilities", json=body)
+    assert r.status_code == 200
+    get_r = client_full_stateful.get("/api/abilities/prompt_ability_test")
+    assert get_r.status_code == 200
+    data = get_r.json()
+    assert data["id"] == "prompt_ability_test"
+    assert data["name"] == "提示词能力测试"
+    assert data.get("source") == "custom"
+    assert data.get("prompt_template") == "用户请求：{message}。请简要回复。"
+
+
+def test_api_abilities_update_prompt_template(client_full_stateful):
+    """PUT /api/abilities/{id} 可更新 prompt_template；GET 返回更新后的值。"""
+    client_full_stateful.post(
+        "/api/abilities",
+        json={
+            "id": "update_prompt_ab",
+            "name": "可更新",
+            "description": "测试更新",
+            "command": ["true"],
+            "prompt_template": "旧模板：{message}",
+        },
+    )
+    r = client_full_stateful.put(
+        "/api/abilities/update_prompt_ab",
+        json={"prompt_template": "新模板：{message}"},
+    )
+    assert r.status_code == 200
+    get_r = client_full_stateful.get("/api/abilities/update_prompt_ab")
+    assert get_r.status_code == 200
+    assert get_r.json().get("prompt_template") == "新模板：{message}"
+
+
+def test_api_abilities_list_includes_custom_with_prompt_template(client_full_stateful):
+    """创建带 prompt_template 的自定义能力后，GET /api/abilities 列表包含该能力且含 prompt_template。"""
+    client_full_stateful.post(
+        "/api/abilities",
+        json={
+            "id": "list_prompt_ab",
+            "name": "列表提示词能力",
+            "description": "用于列表测试",
+            "command": ["true"],
+            "prompt_template": "列表：{message}",
+        },
+    )
+    r = client_full_stateful.get("/api/abilities")
+    assert r.status_code == 200
+    found = next((a for a in r.json() if a.get("id") == "list_prompt_ab"), None)
+    assert found is not None
+    assert found.get("prompt_template") == "列表：{message}"
+    assert found.get("source") == "custom"
+
+
+def test_api_models(client):
+    """GET /api/models returns 200 and has models list and default (from config)."""
+    r = client.get("/api/models")
+    assert r.status_code == 200
+    data = r.json()
+    assert "models" in data
+    assert "default" in data
+    assert isinstance(data["models"], list)
+
+
+def test_api_admin_models_test(client):
+    """POST /api/admin/models/test returns 200 and results list with model_id, available, message."""
+    r = client.post("/api/admin/models/test")
+    assert r.status_code == 200
+    data = r.json()
+    assert "results" in data
+    assert isinstance(data["results"], list)
+    for item in data["results"]:
+        assert "model_id" in item
+        assert "available" in item
+        assert "message" in item
+
+
+def test_api_admin_models_set_default(tmp_path, monkeypatch, mock_db):
+    """PUT /api/admin/models/default with valid model updates config and GET /api/models returns new default."""
+    models_yaml = tmp_path / "models.yaml"
+    models_yaml.write_text("""
+embedding_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://example.com/embeddings"
+    model: "text-embedding-v3"
+    dimensions: 1536
+    timeout: 10
+default_embedding_provider: "dashscope"
+chat_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://example.com/v1"
+    model: "qwen-max"
+    models:
+      - qwen-max
+      - qwen3-max
+    timeout: 60
+default_chat_provider: "dashscope"
+summary_strategies: {}
+""", encoding="utf-8")
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    from app.config import loader as config_loader
+    config_loader._models_config = None
+    with patch("app.main.validate_required_env"):
+        from app.main import app
+        with TestClient(app) as c:
+            r = c.get("/api/models")
+            assert r.status_code == 200
+            assert r.json().get("default") == "qwen-max"
+            put_r = c.put("/api/admin/models/default", json={"model": "qwen3-max"})
+            assert put_r.status_code == 200
+            assert put_r.json().get("default") == "qwen3-max"
+            r2 = c.get("/api/models")
+            assert r2.status_code == 200
+            assert r2.json().get("default") == "qwen3-max"
+    assert "qwen3-max" in (tmp_path / "models.yaml").read_text()
+
+
+def test_api_admin_models_set_default_invalid_400(client):
+    """PUT /api/admin/models/default with model not in allowed list returns 400."""
+    r = client.put("/api/admin/models/default", json={"model": "not-in-list"})
+    assert r.status_code == 400
+    assert "default model" in (r.json().get("detail") or "").lower()
+
+
+def test_api_admin_roles_create_with_default_model(client_full_stateful):
+    """POST /api/admin/roles with valid default_model; GET returns it."""
+    with patch("app.routers.team_admin._allowed_model_ids", return_value=["qwen-max", "qwen3-max"]):
+        create_r = client_full_stateful.post(
+            "/api/admin/roles",
+            json={
+                "name": "model_role",
+                "description": "Role with model",
+                "status": "enabled",
+                "abilities": [],
+                "system_prompt": "You are helpful.",
+                "default_model": "qwen-max",
+            },
+        )
+    assert create_r.status_code == 200
+    get_r = client_full_stateful.get("/api/admin/roles/model_role")
+    assert get_r.status_code == 200
+    assert get_r.json().get("default_model") == "qwen-max"
+    list_r = client_full_stateful.get("/api/admin/roles")
+    assert list_r.status_code == 200
+    role = next((x for x in list_r.json() if x["name"] == "model_role"), None)
+    assert role is not None
+    assert role.get("default_model") == "qwen-max"
+
+
+def test_api_admin_roles_create_invalid_default_model_400(client_full_stateful):
+    """POST /api/admin/roles with default_model not in allowed list returns 400."""
+    with patch("app.routers.team_admin._allowed_model_ids", return_value=["only-allowed"]):
+        r = client_full_stateful.post(
+            "/api/admin/roles",
+            json={
+                "name": "bad_model_role",
+                "description": "x",
+                "status": "enabled",
+                "abilities": [],
+                "system_prompt": "x",
+                "default_model": "not-in-list",
+            },
+        )
+    assert r.status_code == 400
+    assert "default_model" in (r.json().get("detail") or "").lower()
+
+
+def test_api_admin_roles_update_default_model(client_full_stateful):
+    """PUT /api/admin/roles with default_model; GET returns updated value."""
+    with patch("app.routers.team_admin._allowed_model_ids", return_value=["qwen-max", "qwen3-max"]):
+        client_full_stateful.post(
+            "/api/admin/roles",
+            json={
+                "name": "update_model_role",
+                "description": "Original",
+                "status": "enabled",
+                "abilities": [],
+                "system_prompt": "Prompt.",
+                "default_model": "qwen-max",
+            },
+        )
+        put_r = client_full_stateful.put(
+            "/api/admin/roles/update_model_role",
+            json={"default_model": "qwen3-max"},
+        )
+    assert put_r.status_code == 200
+    get_r = client_full_stateful.get("/api/admin/roles/update_model_role")
+    assert get_r.status_code == 200
+    assert get_r.json().get("default_model") == "qwen3-max"
+
+
+def test_api_admin_roles_update_invalid_default_model_400(client_full_stateful):
+    """PUT /api/admin/roles with default_model not in allowed list returns 400."""
+    with patch("app.routers.team_admin._allowed_model_ids", return_value=["qwen-max"]):
+        client_full_stateful.post(
+            "/api/admin/roles",
+            json={
+                "name": "put_bad_role",
+                "description": "x",
+                "status": "enabled",
+                "abilities": [],
+                "system_prompt": "x",
+            },
+        )
+        put_r = client_full_stateful.put(
+            "/api/admin/roles/put_bad_role",
+            json={"default_model": "invalid-model"},
+        )
+    assert put_r.status_code == 400
+    assert "default_model" in (put_r.json().get("detail") or "").lower()
