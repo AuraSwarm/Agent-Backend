@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>任务中心 - AI 员工协作中心</title>
+  <link rel="stylesheet" href="/team/style.css">
+</head>
+<body>
+  <div class="container">
+    <aside class="sidebar">
+      <nav class="sidebar-nav" aria-label="功能导航">
+        <a href="/">返回主对话</a>
+        <a href="/team/" class="active">任务中心</a>
+        <a href="/team/admin/roles.html">员工角色管理</a>
+        <a href="/team/admin/abilities.html">能力管理</a>
+      </nav>
+      <h2 class="sidebar-section-title">任务列表</h2>
+      <div id="task-batch-actions" class="batch-actions" aria-hidden="true">
+        <label class="batch-checkbox-label">
+          <input type="checkbox" id="task-select-all" aria-label="全选任务">
+          <span>全选</span>
+        </label>
+        <button type="button" id="btn-batch-delete-tasks" class="btn-outline-sm btn-danger" disabled title="删除选中的任务">批量删除</button>
+      </div>
+      <div id="task-list" class="task-list-wrap" aria-live="polite">
+        <p id="task-list-loading" class="loading-inline">加载中…</p>
+      </div>
+    </aside>
+    <main class="main-content">
+      <div id="task-header" class="task-header">
+        <div class="task-header-left">
+          <h1 id="task-title">请选择任务</h1>
+          <div id="task-status" class="status-indicator status-placeholder" aria-hidden="true">—</div>
+        </div>
+        <div id="task-actions" class="task-actions" aria-hidden="true">
+          <button type="button" id="btn-clear-messages" class="btn-outline-sm" title="清空该任务下所有消息">清空消息</button>
+          <button type="button" id="btn-delete-task" class="btn-outline-sm btn-danger" title="删除任务（不可恢复）">删除任务</button>
+        </div>
+      </div>
+      <div id="chat-container" class="chat-container" aria-live="polite">
+        <div id="empty-main" class="empty-state empty-state-main">
+          <div class="empty-state-icon" aria-hidden="true">📋</div>
+          <p class="empty-state-lead">从左侧选择一条任务</p>
+          <p class="empty-state-hint">选择任务后可在此查看群聊记录并在下方发送反馈。</p>
+        </div>
+      </div>
+      <div class="input-area">
+        <input type="text" id="user-input" placeholder="输入反馈（例如：增加碳排放数据）" aria-label="反馈内容" disabled>
+        <button type="button" id="send-btn" disabled>发送</button>
+      </div>
+    </main>
+  </div>
+  <script src="/team/script.js"></script>
+</body>
+</html>

@@ -164,6 +164,31 @@ agent-backend test
 
 Runs the full test suite: CLI adapter, config loader, FastAPI endpoints (mocked), Chat API (stream/non-stream, deep thinking, deep research, usage/duration), Web UI structure, layout, and real-AI integration tests. Real-AI tests (chat, embedding, summarizer) **load `~/.ai_env.sh` automatically** when the file exists; if no API key is set, those tests report a clear error instead of skipping.
 
+### Test data isolation (avoid polluting dev/prod)
+
+Use a **dedicated test database** and **test buckets** so test runs do not write into dev/prod data:
+
+1. **Test database**  
+   Create the test DB once (same host/user as dev; default name `agent_backend_test`):
+   ```bash
+   ./scripts/create-test-db.sh
+   ```
+   Then run tests with:
+   ```bash
+   export TEST_DATABASE_URL='postgresql+asyncpg://postgres:postgres@localhost:5432/agent_backend_test'
+   pytest tests/ -v
+   ```
+   When `TEST_DATABASE_URL` is set, the config loader uses it for `database_url` so any test or code path that loads app settings will use the test DB.
+
+2. **Test buckets (OSS / MinIO)**  
+   Create separate buckets for tests (e.g. `aura-mem-test` for OSS, `archives-test` for MinIO). Then run tests with:
+   ```bash
+   export TEST_OSS_BUCKET=aura-mem-test
+   export TEST_MINIO_BUCKET=archives-test
+   pytest tests/ -v
+   ```
+   When set, these override `oss_bucket` and `minio_bucket` from config so long-term storage and archive use test buckets instead of dev/prod.
+
 ### With coverage and real API
 
 ```bash

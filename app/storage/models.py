@@ -39,4 +39,16 @@ class CodeReview(Base):
     __table_args__ = (Index("ix_code_reviews_created_at", "created_at"),)
 
 
-__all__ = ["Session", "Message", "SessionSummary", "SessionStatus", "CodeReview"]
+class CustomAbility(Base):
+    """Web-managed ability (id, name, description, command). Merged with config local_tools for GET /api/abilities and tool execution."""
+
+    __tablename__ = "custom_abilities"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
+    # command: list of args (e.g. ["echo", "{message}"] or ["date"])
+    command: Mapped[list] = mapped_column(JSONB, nullable=False)
+
+
+__all__ = ["Session", "Message", "SessionSummary", "SessionStatus", "CodeReview", "CustomAbility"]

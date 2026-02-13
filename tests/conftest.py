@@ -1,9 +1,18 @@
 """Pytest fixtures: test DB, config overrides, mocks, real AI env."""
 
+# Expose team API and UI fixtures to all test modules
+pytest_plugins = ["tests.test_team_api", "tests.test_ui_pages"]
+
 import asyncio
 import os
 import re
 from pathlib import Path
+
+# When Web-Service/static exists (e.g. workspace with Aura), serve main UI at / so tests match "Aura started" behavior
+_WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
+_WEB_SERVICE_STATIC = _WORKSPACE_ROOT / "Web-Service" / "static"
+if _WEB_SERVICE_STATIC.is_dir():
+    os.environ.setdefault("WEB_UI_DIR", str(_WEB_SERVICE_STATIC))
 
 import pytest
 from sqlalchemy import text

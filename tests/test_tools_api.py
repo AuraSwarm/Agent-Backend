@@ -139,3 +139,81 @@ def test_execute_tool_echo_no_params_fails(client: TestClient):
     )
     # echo tool has command ["echo", "{message}"] so missing param raises ValueError
     assert r.status_code == 400
+
+
+def test_execute_each_registered_tool(client: TestClient):
+    """Execute every registered tool with valid params; all return 200 and returncode 0 (covers all tools)."""
+    r = client.get("/tools")
+    assert r.status_code == 200
+    tools = r.json()
+    assert isinstance(tools, list)
+    for t in tools:
+        tool_id = t.get("id")
+        assert tool_id
+        if tool_id == "echo":
+            payload = {"tool_id": "echo", "params": {"message": "test_execute_each"}}
+        elif tool_id == "date":
+            payload = {"tool_id": "date", "params": {}}
+        else:
+            # Unknown tool from config: skip or use empty params
+            payload = {"tool_id": tool_id, "params": {}}
+        exec_r = client.post("/tools/execute", json=payload)
+        assert exec_r.status_code == 200, f"tool_id={tool_id} failed: {exec_r.json()}"
+        data = exec_r.json()
+        assert "returncode" in data
+        assert data["returncode"] == 0, f"tool_id={tool_id} returncode={data.get('returncode')} stderr={data.get('stderr')}"
+        assert "stdout" in data
+
+
+def test_api_abilities_matches_tools_and_executable(client: TestClient):
+    """GET /api/abilities returns same tool ids as GET /tools; each can be executed (role binding uses abilities)."""
+    tools_r = client.get("/tools")
+    abilities_r = client.get("/api/abilities")
+    assert tools_r.status_code == 200 and abilities_r.status_code == 200
+    tools = {t["id"] for t in tools_r.json()}
+    abilities = {a["id"] for a in abilities_r.json()}
+    assert abilities == tools, "abilities should match local_tools for role binding"
+    for aid in abilities:
+        if aid == "echo":
+            exec_r = client.post("/tools/execute", json={"tool_id": aid, "params": {"message": "ok"}})
+        else:
+            exec_r = client.post("/tools/execute", json={"tool_id": aid, "params": {}})
+        assert exec_r.status_code == 200
+        assert exec_r.json().get("returncode") == 0
+
+
+def test_tools_execute_missing_tool_id_422(client: TestClient):
+    """POST /tools/execute without tool_id returns 422."""
+    r = client.post("/tools/execute", json={"params": {}})
+    assert r.status_code == 422
+
+
+def test_tools_execute_params_null_treated_as_empty(client: TestClient):
+    """POST /tools/execute with params=null is accepted (treated as empty for date)."""
+    r = client.post("/tools/execute", json={"tool_id": "date", "params": None})
+    assert r.status_code == 200
+    assert r.json().get("returncode") == 0
+
+
+def test_api_abilities_each_has_id_name_description(client: TestClient):
+    """GET /api/abilities: each item has id, name, description (boundary schema)."""
+    r = client.get("/api/abilities")
+    assert r.status_code == 200
+    for item in r.json():
+        assert "id" in item
+        assert "name" in item
+        assert "description" in item
+        assert isinstance(item["id"], str)
+        assert isinstance(item.get("name"), str)
+        assert isinstance(item.get("description"), str)
+
+
+def test_tools_execute_echo_empty_message_boundary(client: TestClient):
+    """POST /tools/execute echo with empty string: either 200 (accepted) or 400 (rejected by validation)."""
+    r = client.post("/tools/execute", json={"tool_id": "echo", "params": {"message": ""}})
+    assert r.status_code in (200, 400)
+    if r.status_code == 200:
+        assert r.json().get("returncode") == 0
+        assert "stdout" in r.json()
+    else:
+        assert "detail" in r.json()

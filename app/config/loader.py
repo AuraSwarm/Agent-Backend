@@ -23,6 +23,12 @@ _models_config: ModelsConfig | None = None
 _app_settings: AppSettings | None = None
 
 
+def reset_app_settings_cache() -> None:
+    """Clear cached app settings (for tests). Next get_app_settings() will reload from config and env."""
+    global _app_settings
+    _app_settings = None
+
+
 def _substitute_env(value: Any) -> Any:
     """Replace ${VAR} and $VAR in strings; recurse into dict/list."""
     if isinstance(value, str):
@@ -70,7 +76,10 @@ def _app_config_path() -> Path:
 
 
 def get_app_settings() -> AppSettings:
-    """Return application settings (from config/app.yaml); load once and apply API key to env."""
+    """Return application settings (from config/app.yaml); load once and apply API key to env.
+    When running tests, set TEST_DATABASE_URL / TEST_OSS_BUCKET / TEST_MINIO_BUCKET to avoid
+    polluting dev/prod database and buckets.
+    """
     global _app_settings
     if _app_settings is None:
         path = _app_config_path()
@@ -78,6 +87,12 @@ def get_app_settings() -> AppSettings:
             data = _load_yaml(path)
             if os.environ.get("DATABASE_URL"):
                 data["database_url"] = os.environ["DATABASE_URL"]
+            if os.environ.get("TEST_DATABASE_URL"):
+                data["database_url"] = os.environ["TEST_DATABASE_URL"]
+            if os.environ.get("TEST_OSS_BUCKET"):
+                data["oss_bucket"] = os.environ["TEST_OSS_BUCKET"]
+            if os.environ.get("TEST_MINIO_BUCKET"):
+                data["minio_bucket"] = os.environ["TEST_MINIO_BUCKET"]
             _app_settings = AppSettings.model_validate(data)
         else:
             _app_settings = AppSettings()

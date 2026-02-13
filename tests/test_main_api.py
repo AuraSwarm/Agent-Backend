@@ -225,6 +225,37 @@ def test_chat_accepts_optional_params(client):
         assert "duration_ms" in data
 
 
+def test_chat_system_message_passed_to_adapter(client):
+    """POST /chat with role-style system + user messages: adapter receives full messages (dialogue with AI as employee)."""
+    role_system = "You are an analyst. Reply briefly."
+    user_content = "What is 2+2?"
+    with patch("app.routers.chat.CloudAPIAdapter") as AdapterMock:
+        AdapterMock.return_value.call = AsyncMock(
+            return_value=("Four.", {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12})
+        )
+        r = client.post(
+            "/chat",
+            json={
+                "session_id": "00000000-0000-0000-0000-000000000001",
+                "messages": [
+                    {"role": "system", "content": role_system},
+                    {"role": "user", "content": user_content},
+                ],
+                "stream": False,
+            },
+        )
+    assert r.status_code == 200
+    data = r.json()
+    assert "choices" in data and len(data["choices"]) >= 1
+    assert data["choices"][0].get("message", {}).get("content") == "Four."
+    call_kw = AdapterMock.return_value.call.call_args[1]
+    messages = call_kw.get("messages", [])
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    assert any(role_system in (m.get("content") or "") for m in system_msgs)
+    user_msgs = [m for m in messages if m.get("role") == "user"]
+    assert any(user_content in (m.get("content") or "") for m in user_msgs)
+
+
 def test_chat_non_stream_usage_schema(client):
     """POST /chat non-stream response usage has expected shape (prompt/completion/total_tokens)."""
     r = client.post(
@@ -434,7 +465,12 @@ def test_code_reviews_delete_invalid_uuid_404(client):
     assert r.status_code == 404
 
 
-def test_root_not_found(client):
-    """Backend is API-only; web UI is served by Web-Service. GET / returns 404."""
+def test_root_or_main_ui(client):
+    """GET /: 404 when API-only; 200 with main UI when WEB_UI_DIR is set (Aura)."""
     r = client.get("/")
-    assert r.status_code == 404
+    if r.status_code == 404:
+        return
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+    html = r.text
+    assert "主对话" in html or "Chat" in html or "messages" in html
