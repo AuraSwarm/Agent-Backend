@@ -8,6 +8,50 @@
     var d = new Date(iso);
     return isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN');
   }
+
+  async function loadModels() {
+    var select = document.getElementById('chat-model-select');
+    if (!select) return;
+    var apiBase = (document.documentElement.getAttribute('data-api-base') || '').replace(/\/$/, '');
+    var url = apiBase ? apiBase + '/api/models' : '/api/models';
+    var r = await fetch(url);
+    select.innerHTML = '';
+    if (!r.ok) {
+      var errOpt = document.createElement('option');
+      errOpt.value = '';
+      errOpt.textContent = '加载失败（' + r.status + '）';
+      select.appendChild(errOpt);
+      return;
+    }
+    var data = await r.json().catch(function () { return {}; });
+    var models = (data && data.models) ? data.models : [];
+    var defaultId = (data && data.default) ? data.default : (models[0] || '');
+    models.forEach(function (m) {
+      var opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      if (m === defaultId) opt.selected = true;
+      select.appendChild(opt);
+    });
+    if (models.length === 0) {
+      var emptyOpt = document.createElement('option');
+      emptyOpt.value = '';
+      emptyOpt.textContent = '暂无模型';
+      select.appendChild(emptyOpt);
+    }
+  }
+
+  function setChatInputVisible(visible) {
+    var toolbar = document.getElementById('chat-toolbar');
+    var area = document.getElementById('chat-input-area');
+    var input = document.getElementById('chat-user-input');
+    var btn = document.getElementById('chat-send-btn');
+    if (toolbar) toolbar.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    if (area) area.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    if (input) input.disabled = !visible;
+    if (btn) btn.disabled = !visible;
+  }
+
   async function loadChatList() {
     var list = document.getElementById('chat-session-list');
     var loading = document.getElementById('chat-list-loading');
@@ -33,6 +77,7 @@
   }
   function selectSession(sessionId, title) {
     window._currentChatSessionId = sessionId;
+    setChatInputVisible(true);
     document.querySelectorAll('.chat-session-card').forEach(function (el) { el.classList.toggle('active', el.getAttribute('data-session-id') === sessionId); });
     var h1 = document.querySelector('.chat-intro-header h1');
     if (h1) h1.textContent = title || '未命名对话';
@@ -47,7 +92,9 @@
     var messages = await r.json();
     var html = '<div class="chat-messages-inner">';
     messages.forEach(function (m) {
-      html += '<div class="chat-msg"><span class="chat-msg-role">' + escapeHtml(m.role) + '</span><div class="chat-msg-content">' + escapeHtml(m.content || '') + '</div></div>';
+      var roleLabel = m.role === 'user' ? '用户' : (m.role === 'assistant' ? 'Assistant' : escapeHtml(m.role));
+      var modelLabel = (m.role === 'assistant' && m.model) ? '<span class="chat-msg-model" title="使用的模型">' + escapeHtml(m.model) + '</span>' : '';
+      html += '<div class="chat-msg chat-msg-' + escapeHtml(m.role) + '"><span class="chat-msg-role">' + roleLabel + '</span>' + modelLabel + '<div class="chat-msg-content">' + escapeHtml(m.content || '') + '</div></div>';
     });
     html += '</div><div class="chat-convert-bar"><button type="button" id="btn-convert-current" class="btn-outline-sm">将此对话转为任务</button></div>';
     container.innerHTML = html;
@@ -66,6 +113,65 @@
     await loadChatList();
     if (data.session_id) selectSession(data.session_id, '未命名对话');
   }
+  function showThinkingPlaceholder(container) {
+    var inner = container.querySelector('.chat-messages-inner');
+    if (inner) {
+      var wrap = document.createElement('div');
+      wrap.className = 'chat-msg chat-msg-thinking';
+      wrap.innerHTML = '<span class="chat-msg-role">Assistant</span><div class="chat-msg-content">正在思考…</div>';
+      inner.appendChild(wrap);
+    } else {
+      container.innerHTML = '<div class="chat-messages-inner"><div class="chat-msg chat-msg-thinking"><span class="chat-msg-role">Assistant</span><div class="chat-msg-content">正在思考…</div></div></div>';
+    }
+  }
+
+  async function sendMessage() {
+    var sessionId = window._currentChatSessionId;
+    var input = document.getElementById('chat-user-input');
+    var select = document.getElementById('chat-model-select');
+    if (!sessionId || !input || !select) return;
+    var text = (input.value && input.value.trim()) || '';
+    if (!text) return;
+    var messages = (window._currentChatMessages || []).slice();
+    messages.push({ role: 'user', content: text });
+    var model = select.value || undefined;
+    var btn = document.getElementById('chat-send-btn');
+    var container = document.getElementById('chat-main');
+    if (btn) btn.disabled = true;
+    showThinkingPlaceholder(container);
+    input.value = '';
+    var r = await fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        session_id: sessionId,
+        messages: messages,
+        model: model || undefined,
+        stream: false
+      })
+    });
+    if (btn) btn.disabled = false;
+    if (!r.ok) {
+      await loadMessages(sessionId);
+      var err = await r.json().catch(function () { return { detail: r.statusText }; });
+      alert('发送失败：' + (err.detail || err.message || r.status));
+      return;
+    }
+    await loadMessages(sessionId);
+  }
+
   document.getElementById('btn-new-chat').addEventListener('click', createChat);
-  document.addEventListener('DOMContentLoaded', function () { document.getElementById('chat-list-loading') && document.getElementById('chat-list-loading').remove(); loadChatList(); });
+  var sendBtn = document.getElementById('chat-send-btn');
+  if (sendBtn) sendBtn.addEventListener('click', sendMessage);
+  var chatInput = document.getElementById('chat-user-input');
+  if (chatInput) {
+    chatInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendMessage(); }
+    });
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('chat-list-loading') && document.getElementById('chat-list-loading').remove();
+    loadModels();
+    loadChatList();
+  });
 })();

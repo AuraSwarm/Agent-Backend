@@ -8,17 +8,19 @@ AI 员工团队：角色与能力管理 API。
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 
-from app.config.loader import get_config, update_default_chat_model
+from app.config.loader import get_config, reload_config, update_default_chat_model
 from app.constants import CHAT_ABILITY_ID
 from app.storage.db import session_scope
-from app.storage.models import CustomAbility
+from app.storage.models import CustomAbility, Message, Session
 from memory_base.models_team import EmployeeRole, PromptVersion, RoleAbility
 
 logger = structlog.get_logger(__name__)
@@ -45,15 +47,59 @@ async def ensure_all_roles_have_chat_ability() -> int:
     return updated
 
 
-def _allowed_model_ids() -> list[str]:
-    """可绑定到角色的对话模型 ID 列表（来自 config chat_providers 默认 provider 的 models）。"""
+def _get_provider_for_model(config: Any, model_id: str) -> tuple[str | None, Any]:
+    """根据模型 ID 解析所属 provider，返回 (provider_name, prov) 或 (None, None)。"""
+    providers = getattr(config, "chat_providers", {}) or {}
+    for name, prov in providers.items():
+        models = getattr(prov, "models", None) or [getattr(prov, "model", "")]
+        if model_id in (models or []):
+            return (name, prov)
+    return (None, None)
+
+
+def _all_provider_model_pairs(config: Any) -> list[tuple[Any, str]]:
+    """所有 chat_providers 的 (prov, model_id) 列表，默认 provider 优先，保证 claude-local / cursor-local / copilot-local 等均被包含。"""
+    providers = getattr(config, "chat_providers", {}) or {}
+    default_name = getattr(config, "default_chat_provider", None) or "dashscope"
+    seen: set[str] = set()
+    result: list[tuple[Any, str]] = []
+    for name in [default_name] + [n for n in providers.keys() if n != default_name]:
+        if name not in providers:
+            continue
+        prov = providers[name]
+        for m in getattr(prov, "models", None) or [getattr(prov, "model", "")] or []:
+            if m and m not in seen:
+                seen.add(m)
+                result.append((prov, m))
+    return result
+
+
+def _all_chat_model_ids() -> list[str]:
+    """可绑定到角色的对话模型 ID 列表（合并所有 chat_providers 的 models，默认 provider 优先）。"""
     config = get_config()
     providers = getattr(config, "chat_providers", {}) or {}
     default_name = getattr(config, "default_chat_provider", None) or "dashscope"
-    if default_name not in providers:
-        return []
-    prov = providers[default_name]
-    return list(getattr(prov, "models", None) or [getattr(prov, "model", "")] or [])
+    seen: set[str] = set()
+    result: list[str] = []
+    if default_name in providers:
+        prov = providers[default_name]
+        for m in getattr(prov, "models", None) or [getattr(prov, "model", "")] or []:
+            if m and m not in seen:
+                seen.add(m)
+                result.append(m)
+    for name, prov in providers.items():
+        if name == default_name:
+            continue
+        for m in getattr(prov, "models", None) or [getattr(prov, "model", "")] or []:
+            if m and m not in seen:
+                seen.add(m)
+                result.append(m)
+    return result
+
+
+def _allowed_model_ids() -> list[str]:
+    """可绑定到角色的对话模型 ID 列表（与 list_models 一致：包含所有 provider 的 models）。"""
+    return _all_chat_model_ids()
 
 
 # --- Schemas ---
@@ -114,26 +160,44 @@ def _custom_to_item(row: CustomAbility) -> dict[str, Any]:
 
 @router.get("/models")
 async def list_models() -> dict[str, Any]:
-    """可绑定到角色的对话模型列表（与 GET /models 同源：config chat_providers）。"""
-    config = get_config()
+    """可绑定到角色的对话模型列表（合并所有 chat_providers 的 models）。配置加载放入线程池避免阻塞事件循环。"""
+    config = await asyncio.to_thread(reload_config)
     providers = getattr(config, "chat_providers", {}) or {}
     default_name = getattr(config, "default_chat_provider", None) or "dashscope"
-    if default_name not in providers:
-        return {"models": [], "default": None}
-    prov = providers[default_name]
-    models = getattr(prov, "models", None) or [getattr(prov, "model", "")]
-    return {"models": models, "default": getattr(prov, "model", None)}
+    default_model = None
+    if default_name in providers:
+        prov = providers[default_name]
+        default_model = getattr(prov, "model", None)
+    models = _models_list_from_config(config)
+    return {"models": models, "default": default_model}
+
+
+def _models_list_from_config(config: Any) -> list[str]:
+    """从已加载的 config 计算模型 ID 列表（供 list_models 在子线程外使用）。"""
+    providers = getattr(config, "chat_providers", {}) or {}
+    default_name = getattr(config, "default_chat_provider", None) or "dashscope"
+    seen: set[str] = set()
+    result: list[str] = []
+    if default_name in providers:
+        prov = providers[default_name]
+        for m in getattr(prov, "models", None) or [getattr(prov, "model", "")] or []:
+            if m and m not in seen:
+                seen.add(m)
+                result.append(m)
+    for name, prov in providers.items():
+        if name == default_name:
+            continue
+        for m in getattr(prov, "models", None) or [getattr(prov, "model", "")] or []:
+            if m and m not in seen:
+                seen.add(m)
+                result.append(m)
+    return result
 
 
 async def _test_one_model(prov: Any, model: str, prompt: str = "Say OK in one word.") -> tuple[str, bool, str]:
     """Call one model; return (model_id, available, message). On error returns available=False with message."""
-    from app.adapters.cloud import CloudAPIAdapter
-    adapter = CloudAPIAdapter(
-        api_key_env=prov.api_key_env,
-        endpoint=prov.endpoint,
-        model=model,
-        timeout=getattr(prov, "timeout", 60),
-    )
+    from app.adapters.factory import build_chat_adapter
+    adapter = build_chat_adapter(prov, model)
     result = await adapter.call(prompt, model=model)
     out = result[0] if isinstance(result, tuple) else result
     msg = (out or "").strip()[:120]
@@ -142,6 +206,11 @@ async def _test_one_model(prov: Any, model: str, prompt: str = "Say OK in one wo
 
 class SetDefaultModelBody(BaseModel):
     model: str
+
+
+class TestModelsBody(BaseModel):
+    """Optional: test only this model_id; omit to test all models of default provider."""
+    model: str | None = None
 
 
 @router.put("/admin/models/default")
@@ -158,18 +227,28 @@ async def set_default_model(body: SetDefaultModelBody) -> dict[str, Any]:
 
 
 @router.post("/admin/models/test")
-async def test_models_availability() -> dict[str, Any]:
-    """测试当前配置的对话模型可用性；返回每项 model_id, available, message。供模型管理页使用。"""
+async def test_models_availability(body: TestModelsBody | None = Body(None)) -> dict[str, Any]:
+    """测试对话模型可用性。body.model 为空时测试所有 provider 的全部模型（含 claude-local、cursor-local、copilot-local）；指定 model 时仅测试该模型。"""
     config = get_config()
     providers = getattr(config, "chat_providers", {}) or {}
-    default_name = getattr(config, "default_chat_provider", None) or "dashscope"
-    if default_name not in providers:
-        return {"results": [], "message": "no chat provider configured"}
-    prov = providers[default_name]
-    models = getattr(prov, "models", None) or [getattr(prov, "model", "")]
+    single_model = None
+    if body and getattr(body, "model", None):
+        single_model = (body.model or "").strip() or None
+    if single_model:
+        prov_name, prov = _get_provider_for_model(config, single_model)
+        if prov is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"model {single_model!r} not found in any chat_providers",
+            )
+        pairs = [(prov, single_model)]
+    else:
+        if not providers:
+            return {"results": [], "message": "no chat provider configured"}
+        pairs = _all_provider_model_pairs(config)
     results: list[dict[str, Any]] = []
     prompt = "Say OK in one word."
-    for model in models:
+    for prov, model in pairs:
         try:
             model_id, available, message = await _test_one_model(prov, model, prompt)
         except Exception as e:
@@ -429,6 +508,76 @@ async def delete_role(role_name: str) -> dict[str, str]:
         await db.execute(delete(EmployeeRole).where(EmployeeRole.name == role_name))
         await db.commit()
     return {"message": "Role deleted"}
+
+
+@router.post("/admin/roles/{role_name}/test")
+async def test_role(role_name: str) -> dict[str, Any]:
+    """测试角色：基础对话是否可用、各能力是否可执行。不写业务数据，仅用临时 session 测完即删。"""
+    from app.routers.team_room import _process_task_and_reply, _try_run_ability
+
+    async with session_scope() as db:
+        r = await db.execute(select(EmployeeRole).where(EmployeeRole.name == role_name))
+        role = r.scalar_one_or_none()
+        if not role:
+            raise HTTPException(status_code=404, detail="Role not found")
+        r_ab = await db.execute(select(RoleAbility.ability_id).where(RoleAbility.role_name == role_name))
+        ability_ids = [row[0] for row in r_ab.fetchall()]
+        if CHAT_ABILITY_ID not in ability_ids:
+            ability_ids = [CHAT_ABILITY_ID] + ability_ids
+
+    # 1) 基础对话：创建临时任务会话，@ 该角色发一条消息，同步等待回复，检查是否有 assistant 回复
+    test_message = "@" + role_name + " 请回复 OK"
+    sid: uuid.UUID | None = None
+    async with session_scope() as db:
+        s = Session(title="[角色测试]", metadata_={"is_task": True})
+        db.add(s)
+        await db.flush()
+        sid = s.id
+        db.add(
+            Message(
+                id=uuid.uuid4(),
+                session_id=sid,
+                role="user",
+                content=test_message,
+            )
+        )
+        await db.commit()
+    if sid is None:
+        raise RuntimeError("session id not set")
+    dialogue_ok = False
+    dialogue_message = ""
+    await _process_task_and_reply(sid, test_message, valid_mentions=[role_name])
+    async with session_scope() as db:
+        r = await db.execute(
+            select(Message).where(Message.session_id == sid).order_by(Message.created_at.asc())
+        )
+        messages = list(r.scalars().all())
+        assistant_msgs = [m for m in messages if m.role == "assistant"]
+        if assistant_msgs:
+            dialogue_ok = True
+            dialogue_message = (assistant_msgs[-1].content or "").strip()[:200] or "（无文本）"
+        await db.execute(delete(Message).where(Message.session_id == sid))
+        await db.execute(delete(Session).where(Session.id == sid))
+        await db.commit()
+
+    # 2) 能力：对每个绑定能力执行一次简单测试（对话能力已在上一步测过，可跳过或标为通过）
+    ability_results: list[dict[str, Any]] = []
+    for aid in ability_ids:
+        if aid == CHAT_ABILITY_ID:
+            ability_results.append({"id": aid, "ok": dialogue_ok, "message": "与基础对话共用测试"})
+            continue
+        result = await _try_run_ability(aid, ability_ids, "test")
+        is_error = isinstance(result, str) and (
+            result.strip().startswith("[") or "失败" in result or "异常" in result
+        )
+        ok = not is_error
+        msg = (result or "(无输出)").strip()[:150] if result else "(无输出)"
+        ability_results.append({"id": aid, "ok": ok, "message": msg})
+    return {
+        "dialogue_ok": dialogue_ok,
+        "dialogue_message": dialogue_message,
+        "abilities": ability_results,
+    }
 
 
 @router.post("/admin/roles/ensure-chat-ability")

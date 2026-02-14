@@ -172,8 +172,8 @@ def test_api_abilities_matches_tools_and_executable(client: TestClient):
     assert tools_r.status_code == 200 and abilities_r.status_code == 200
     tools = {t["id"] for t in tools_r.json()}
     abilities = {a["id"] for a in abilities_r.json()}
-    assert abilities == tools, "abilities should match local_tools for role binding"
-    for aid in abilities:
+    assert tools <= abilities, "every local_tool should appear in abilities"
+    for aid in tools:
         if aid == "echo":
             exec_r = client.post("/tools/execute", json={"tool_id": aid, "params": {"message": "ok"}})
         else:
@@ -217,3 +217,22 @@ def test_tools_execute_echo_empty_message_boundary(client: TestClient):
         assert "stdout" in r.json()
     else:
         assert "detail" in r.json()
+
+
+@pytest.mark.real_local
+def test_execute_local_tool_echo_real():
+    """Real execution: execute_local_tool with config echo tool."""
+    config = get_config()
+    result = execute_local_tool(config, "echo", {"message": "real_test_hello"})
+    assert result["returncode"] == 0
+    assert "real_test_hello" in result["stdout"]
+
+
+@pytest.mark.real_local
+def test_execute_local_tool_date_real():
+    """Real execution: execute_local_tool with config date tool."""
+    config = get_config()
+    result = execute_local_tool(config, "date", {})
+    assert result["returncode"] == 0
+    assert result["stdout"].strip()
+rip()

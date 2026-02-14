@@ -14,7 +14,6 @@ import structlog
 from pydantic import BaseModel
 
 from app.config.loader import get_config
-from app.adapters.cloud import CloudAPIAdapter
 
 logger = structlog.get_logger(__name__)
 
@@ -87,17 +86,20 @@ async def compress_context(
     return validated.model_dump(), None
 
 
-def _get_adapter_for_model(model: str) -> CloudAPIAdapter:
-    """Build CloudAPIAdapter for given model key from config chat_providers."""
+def _get_adapter_for_model(model: str):
+    """Build chat adapter for given model from config chat_providers (cloud or claude_local)."""
+    from app.adapters.factory import build_chat_adapter
     config = get_config()
-    default_provider = config.default_chat_provider or "dashscope"
     providers = getattr(config, "chat_providers", None) or {}
-    if default_provider not in providers:
-        raise ValueError(f"default chat provider {default_provider} not in config")
-    prov = providers[default_provider]
-    return CloudAPIAdapter(
-        api_key_env=prov.api_key_env,
-        endpoint=prov.endpoint,
-        model=model,
-        timeout=prov.timeout,
-    )
+    prov_name, prov = None, None
+    for name, p in providers.items():
+        models = getattr(p, "models", None) or [getattr(p, "model", "")]
+        if model in (models or []):
+            prov_name, prov = name, p
+            break
+    if prov is None:
+        default_provider = config.default_chat_provider or "dashscope"
+        if default_provider not in providers:
+            raise ValueError(f"default chat provider {default_provider} not in config")
+        prov = providers[default_provider]
+    return build_chat_adapter(prov, model)

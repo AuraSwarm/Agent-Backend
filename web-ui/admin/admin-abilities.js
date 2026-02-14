@@ -249,12 +249,13 @@
     btn.textContent = '刷新中…';
     var r = await fetch('/admin/reload', { method: 'POST' });
     btn.disabled = false;
-    btn.textContent = '刷新能力列表';
+    btn.textContent = '刷新配置';
     if (!r.ok) {
-      alert('刷新失败，请重试');
+      alert('刷新配置失败，请重试');
       return;
     }
     await loadAbilities();
+    alert('配置已刷新，能力列表已更新。');
   }
 
   async function repairPromptTemplate() {

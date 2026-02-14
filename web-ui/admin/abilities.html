@@ -28,12 +28,12 @@
         <h1>能力管理</h1>
         <div class="page-header-actions">
           <button type="button" id="ability-repair-btn" class="btn-outline-sm" title="单次修复：为能力表补齐 prompt_template 列（若此前未迁移）">修复</button>
-          <button type="button" id="ability-refresh-btn" class="btn-outline-sm" title="重新加载配置与能力列表，识别 Aura/仓库中新增能力">刷新能力列表</button>
+          <button type="button" id="ability-refresh-btn" class="btn-outline-sm" title="重新加载 config 与能力列表，识别 Aura/仓库中新增能力">刷新配置</button>
           <button type="button" id="ability-create-btn" class="btn-primary">新建能力</button>
         </div>
       </div>
       <div class="ability-page-intro">
-        <p class="ability-page-hint">能力可来自 config（<code>models.yaml</code> 的 <code>local_tools</code>）、Aura 的 <code>config/abilities.yaml</code>（ability repo），或在本页新建/编辑（自定义）。在 ability repo 中新增能力后，点击「刷新能力列表」即可在 Web 端联动获取。</p>
+        <p class="ability-page-hint">能力可来自 config（<code>models.yaml</code> 的 <code>local_tools</code>）、Aura 的 <code>config/abilities.yaml</code>（ability repo），或在本页新建/编辑（自定义）。在 ability repo 或 config 中变更后，点击「刷新配置」即可在 Web 端联动获取。</p>
       </div>
       <div class="abilities-section">
         <h2 class="abilities-section-title" id="abilities-section-title">能力列表</h2>

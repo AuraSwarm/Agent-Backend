@@ -11,6 +11,7 @@ Config loader: YAML loading, env variable injection, Pydantic validation, hot re
 import importlib.util
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Callable
 
@@ -167,11 +168,34 @@ def _merge_aura_abilities_into_data(data: dict[str, Any], config_dir: str | None
     data["local_tools"] = list(by_id.values())
 
 
+def _sync_models_yaml_from_backend_source(config_dir: str | Path) -> None:
+    """
+    When BACKEND_CONFIG_SOURCE is set (e.g. by Aura), copy models.yaml from that
+    directory into config_dir so 刷新配置 picks up the latest backend models (e.g. cursor-local, copilot-local).
+    """
+    source_dir = os.environ.get("BACKEND_CONFIG_SOURCE")
+    if not source_dir:
+        return
+    src = Path(source_dir).resolve()
+    if not src.is_dir():
+        return
+    dst = Path(config_dir).resolve()
+    if src == dst:
+        return
+    for name in ("models.yaml", "models.yaml.example"):
+        src_file = src / name
+        if src_file.exists():
+            shutil.copy2(src_file, dst / name)
+            break
+
+
 def load_models_config(config_dir: str | None = None) -> ModelsConfig:
     """
     Load and validate models.yaml from config directory.
     When AURA_ABILITIES_FILE is set, merges that file's abilities into local_tools (by id)
     so that Aura 仓库中新增能力 can be recognized after reload without restart.
+    When BACKEND_CONFIG_SOURCE is set (e.g. by Aura), syncs models.yaml from that path first
+    so 刷新配置 shows the latest backend models (cursor-local, copilot-local, etc.).
 
     Args:
         config_dir: Override config directory (default from AppSettings).
@@ -181,6 +205,7 @@ def load_models_config(config_dir: str | None = None) -> ModelsConfig:
     """
     settings = get_app_settings()
     base = Path(config_dir or settings.config_dir)
+    _sync_models_yaml_from_backend_source(base)
     path = base / "models.yaml"
     if not path.exists():
         path = base / "models.yaml.example"
@@ -219,16 +244,18 @@ def reload_config(config_dir: str | None = None) -> ModelsConfig:
 def update_default_chat_model(model_id: str, config_dir: str | None = None) -> str:
     """
     Set the default chat model in models.yaml and reload config.
+    model_id 可属于任意已配置的 chat_provider（如 dashscope 或 anthropic），
+    会更新该 provider 的 model 字段。
 
     Args:
-        model_id: Model ID (must be in the default provider's models list).
+        model_id: Model ID (must be in some provider's models list).
         config_dir: Optional override for config directory.
 
     Returns:
         The new default model id.
 
     Raises:
-        ValueError: If models.yaml missing, provider missing, or model_id not allowed.
+        ValueError: If models.yaml missing or model_id not in any provider.
     """
     settings = get_app_settings()
     base = Path(config_dir or settings.config_dir).resolve()
@@ -238,14 +265,18 @@ def update_default_chat_model(model_id: str, config_dir: str | None = None) -> s
     raw = path.read_text(encoding="utf-8")
     data = yaml.safe_load(raw) or {}
     providers = data.get("chat_providers") or {}
-    default_name = data.get("default_chat_provider") or "dashscope"
-    if default_name not in providers:
-        raise ValueError("default chat provider not configured")
-    prov = providers[default_name]
-    allowed = prov.get("models") or [prov.get("model", "")]
-    if model_id not in allowed:
-        raise ValueError(f"model {model_id!r} must be one of: {allowed}")
-    prov["model"] = model_id
+    found_provider = None
+    for name, prov in providers.items():
+        allowed = prov.get("models") or [prov.get("model", "")]
+        if model_id in allowed:
+            found_provider = name
+            prov["model"] = model_id
+            break
+    if found_provider is None:
+        all_models = []
+        for prov in providers.values():
+            all_models.extend(prov.get("models") or [prov.get("model", "")] or [])
+        raise ValueError(f"model {model_id!r} must be one of: {list(dict.fromkeys(all_models))}")
     path.write_text(
         yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
         encoding="utf-8",

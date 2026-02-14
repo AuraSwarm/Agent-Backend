@@ -27,6 +27,7 @@
       <div class="page-header">
         <h1>模型管理</h1>
         <div class="page-header-actions">
+          <button type="button" id="models-reload-config-btn" class="btn-outline-sm" title="重新加载 config，使 models.yaml 等配置生效">刷新配置</button>
           <button type="button" id="models-test-btn" class="btn-outline-sm" title="测试当前配置的对话模型可用性">测试可用性</button>
         </div>
       </div>
@@ -35,11 +36,24 @@
       </div>
       <div class="models-section">
         <h2 class="models-section-title" id="models-section-title">模型清单</h2>
-        <div id="models-list" class="models-list" aria-live="polite" aria-busy="false" aria-labelledby="models-section-title">
-          <p id="models-loading" class="loading-inline">加载中…</p>
-        </div>
+        <p id="models-loading" class="loading-inline">加载中…</p>
+        <div id="models-list" class="models-list" aria-live="polite" aria-busy="false" aria-labelledby="models-section-title"></div>
       </div>
     </main>
+  </div>
+
+  <div id="model-fail-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="model-fail-modal-title" aria-hidden="true" style="display: none;">
+    <div class="modal-content modal-content-narrow">
+      <div class="modal-header">
+        <h2 id="model-fail-modal-title">测试失败详情</h2>
+        <button type="button" class="modal-close" id="model-fail-modal-close" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="form-group"><strong>模型</strong>: <span id="model-fail-modal-model"></span></p>
+        <p class="form-group"><strong>报错原因</strong>:</p>
+        <pre id="model-fail-modal-message" class="model-fail-message-pre"></pre>
+      </div>
+    </div>
   </div>
   <script src="/team/admin/admin-models.js"></script>
 </body>

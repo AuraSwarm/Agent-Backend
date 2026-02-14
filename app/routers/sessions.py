@@ -44,6 +44,7 @@ class SessionListItem(BaseModel):
 class MessageItem(BaseModel):
     role: str
     content: str
+    model: str | None = None  # 仅 assistant 消息有值，表示使用的对话模型 ID
 
 
 class UpdateSessionRequest(BaseModel):
@@ -156,7 +157,16 @@ async def get_session_messages(session_id: str) -> list[MessageItem]:
             select(Message).where(Message.session_id == sid).order_by(Message.created_at.asc())
         )
         messages = r2.scalars().all()
-    return [MessageItem(role=m.role, content=m.content or "") for m in messages]
+    def _msg_model(m) -> str | None:
+        if m.role != "assistant":
+            return None
+        v = getattr(m, "model", None)
+        return v if isinstance(v, str) else None
+
+    return [
+        MessageItem(role=m.role, content=m.content or "", model=_msg_model(m))
+        for m in messages
+    ]
 
 
 @router.patch("/{session_id}")

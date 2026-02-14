@@ -166,10 +166,11 @@ def test_design_tasks_response_shape(client):
 
 
 def test_design_room_messages_ordered_by_time(client_task_center, task_center_state):
-    """设计：群聊消息按时间升序返回（created_at.asc）。"""
+    """设计：群聊消息按时间升序返回（created_at.asc）。room 仅支持任务会话，故用 POST /api/tasks 创建。"""
     sessions_list, messages_by_session = task_center_state
-    client_task_center.post("/sessions", json={"title": "order_test"})
-    session_id = str(sessions_list[0].id)
+    create_r = client_task_center.post("/api/tasks", json={"title": "order_test"})
+    assert create_r.status_code == 200
+    session_id = create_r.json()["id"]
     for i, msg in enumerate(["first", "second", "third"]):
         client_task_center.post(
             f"/api/chat/room/{session_id}/message",
@@ -183,10 +184,11 @@ def test_design_room_messages_ordered_by_time(client_task_center, task_center_st
 
 
 def test_design_room_message_body_role_and_type(client_task_center, task_center_state):
-    """设计：消息体支持 role、message、message_type（user_message/ai_message/system_message）。"""
+    """设计：消息体支持 role、message、message_type（user_message/ai_message/system_message）。room 仅支持任务会话。"""
     sessions_list, messages_by_session = task_center_state
-    client_task_center.post("/sessions", json={"title": "role_test"})
-    session_id = str(sessions_list[0].id)
+    create_r = client_task_center.post("/api/tasks", json={"title": "role_test"})
+    assert create_r.status_code == 200
+    session_id = create_r.json()["id"]
     r = client_task_center.post(
         f"/api/chat/room/{session_id}/message",
         json={"role": "user", "message": "hello", "message_type": "user_message"},

@@ -28,13 +28,15 @@ class SummaryOutputSchemaProperty(BaseModel):
 
 
 class ChatProviderConfig(BaseModel):
-    """Chat API provider (Qwen/OpenAI-compatible) for summarization and chat."""
+    """Chat API provider: cloud (HTTP) or claude_local (local CLI)."""
 
-    api_key_env: str = Field(..., description="Environment variable for API key")
-    endpoint: str = Field(..., description="Chat completions base URL (e.g. .../v1)")
+    type: str = Field("cloud", description="cloud | claude_local")
+    api_key_env: str = Field("", description="Environment variable for API key (cloud)")
+    endpoint: str = Field("", description="Chat completions base URL (cloud)")
     model: str = Field(..., description="Default model name")
-    models: list[str] | None = Field(None, description="Optional list of model IDs to try (e.g. for try-models)")
-    timeout: int = Field(60, ge=1, le=120)
+    models: list[str] | None = Field(None, description="Optional list of model IDs to try")
+    timeout: int = Field(60, ge=1, le=300)
+    command: list[str] | str | None = Field(None, description="CLI command for claude_local, e.g. [claude, -p]")
 
 
 class SummaryStrategyConfig(BaseModel):

@@ -26,10 +26,23 @@
       </div>
       <div class="page-header">
         <h1>员工角色管理</h1>
-        <button type="button" id="create-role-btn">新建角色</button>
+        <div class="page-header-actions">
+          <button type="button" id="config-reload-btn" class="btn-outline-sm" title="重新加载 config，使 models、abilities 等配置生效">刷新配置</button>
+          <button type="button" id="create-role-btn">新建角色</button>
+        </div>
       </div>
       <div id="roles-list" class="roles-list"></div>
     </main>
+  </div>
+
+  <div id="role-test-result-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="role-test-result-title" aria-hidden="true">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="role-test-result-title">角色测试结果</h2>
+        <button type="button" class="modal-close" id="role-test-result-close" aria-label="关闭">×</button>
+      </div>
+      <div id="role-test-result-body" class="modal-body"></div>
+    </div>
   </div>
 
   <div id="role-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true">

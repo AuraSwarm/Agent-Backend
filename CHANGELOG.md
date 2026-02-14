@@ -20,6 +20,7 @@
 
 ### Added
 
+- **对话回复展示模型**：主对话页（/team/chat）与 GET /sessions/{id}/messages 返回每条 assistant 消息的 `model` 字段；POST /chat 持久化时写入使用的模型 ID；chat 页模型下拉在加载失败或暂无模型时显示「加载失败（状态码）」/「暂无模型」；支持 `<html data-api-base="...">` 以适配反向代理。
 - **CLI 主入口测试**（`tests/test_cli_main.py`）：覆盖 `main()` 与 `python -m app.cli version`，验证 `version`、`--help`、`serve --help` 行为。
 - **长时记忆存储**：当 `config/app.yaml`（或 Aura 注入的配置）中配置了阿里云 OSS（`oss_endpoint`、`oss_bucket`、`oss_access_key_*`）时，启动时初始化 OSS 作为 Memory-Base 长时存储后端；未配置时使用内存后端。`app.storage.long_term` 提供 `get_long_term_backend()`、`is_long_term_oss()`、`reset_long_term_backend()`（测试用）。
 - **Chat 长时记忆注入**：当 OSS 已配置且请求带 `user_id`（或使用 `session_id`）时，从长时存储加载用户画像与相关知识三元组并作为 system 前缀注入对话。

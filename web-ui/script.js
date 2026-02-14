@@ -63,15 +63,19 @@
       card.setAttribute('data-task-id', task.id);
       card.tabIndex = 0;
       var roles = task.assignee_roles || (task.assignee_role ? [task.assignee_role] : []);
-      var roleHtml = roles.length ? roles.map(function (r) { return '<span class="task-card-role">' + escapeHtml(r) + '</span>'; }).join('') : '';
+      var roleHtml = roles.length ? ('<span class="task-card-role-label">角色：</span>' + roles.map(function (r) { return '<span class="task-card-role">' + escapeHtml(r) + '</span>'; }).join('')) : '';
+      var statusText = task.status === 'completed' ? '已完成' : '进行中';
+      var timeText = formatTime(task.last_updated);
       card.innerHTML = '<label class="task-card-checkbox-wrap" onclick="event.stopPropagation()">' +
         '<input type="checkbox" class="task-card-checkbox" data-task-id="' + escapeHtml(task.id) + '" aria-label="选择任务">' +
         '</label>' +
         '<div class="task-card-inner">' +
-        '<div class="task-title">' + escapeHtml(task.title) + '</div>' +
+        '<div class="task-title">' + escapeHtml(task.title || '未命名任务') + '</div>' +
         (roleHtml ? '<div class="task-card-role-wrap">' + roleHtml + '</div>' : '') +
-        '<div class="task-status ' + task.status + '">' + (task.status === 'completed' ? '已完成' : '进行中') + '</div>' +
-        '<div class="task-time">' + formatTime(task.last_updated) + '</div>' +
+        '<div class="task-meta-line">' +
+        '<span class="task-status ' + task.status + '">' + statusText + '</span>' +
+        '<span class="task-meta-sep"> · </span>' +
+        '<span class="task-time">' + timeText + '</span></div>' +
         '</div>' +
         '<button type="button" class="task-card-delete" data-task-id="' + escapeHtml(task.id) + '" aria-label="删除该任务" title="删除任务">×</button>';
       card.addEventListener('click', function (e) {
@@ -299,7 +303,7 @@
           return;
         }
       }
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         sendMessage();
       }
@@ -321,18 +325,32 @@
   }
 
   async function updateTaskAssigneeSelect(taskId, currentRoles) {
-    var selectEl = document.getElementById('task-assignee-role');
-    if (!selectEl) return;
+    var container = document.getElementById('task-assignee-role');
+    if (!container) return;
     var roles = await fetchRoles();
-    selectEl.innerHTML = '';
+    container.innerHTML = '';
     var selected = Array.isArray(currentRoles) ? currentRoles : (currentRoles ? [currentRoles] : []);
     roles.forEach(function (r) {
       var name = r.name || r;
-      var opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name;
-      opt.selected = selected.indexOf(name) !== -1;
-      selectEl.appendChild(opt);
+      var label = document.createElement('label');
+      label.className = 'task-assignee-option';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = name;
+      cb.checked = selected.indexOf(name) !== -1;
+      cb.addEventListener('change', function () {
+        var checked = Array.from(container.querySelectorAll('input[type="checkbox"]')).filter(function (c) { return c.checked; }).map(function (c) { return c.value; });
+        fetch('/api/tasks/' + encodeURIComponent(taskId), {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assignee_roles: checked })
+        }).then(function (r) {
+          if (r.ok) loadTaskList();
+        });
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(' ' + name));
+      container.appendChild(label);
     });
   }
 
@@ -349,19 +367,6 @@
     statusEl.textContent = task.status === 'completed' ? '✅ 已完成' : '🔄 进行中';
     statusEl.removeAttribute('aria-hidden');
     await updateTaskAssigneeSelect(sessionId, task.assignee_roles || (task.assignee_role ? [task.assignee_role] : []));
-    var selectEl = document.getElementById('task-assignee-role');
-    if (selectEl) {
-      selectEl.onchange = function () {
-        var selected = Array.from(selectEl.selectedOptions || []).map(function (o) { return o.value; });
-        fetch('/api/tasks/' + encodeURIComponent(sessionId), {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ assignee_roles: selected })
-        }).then(function (r) {
-          if (r.ok) loadTaskList();
-        });
-      };
-    }
     showChatLoading();
     var ok = await loadMessages(sessionId);
     if (!ok) return;
@@ -397,17 +402,22 @@
       el.className = 'message ' + (msg.role === 'user' ? 'user' : 'ai');
       var displayName = (msg.role === 'assistant' && msg.reply_by_role) ? msg.reply_by_role : (roleMap[msg.role] || msg.role);
       var mentionLine = (msg.mentioned_roles && msg.mentioned_roles.length) ? ' <span class="message-mentions">发给 ' + msg.mentioned_roles.map(function (r) { return '@' + escapeHtml(r); }).join(' ') + '</span>' : '';
-      el.innerHTML = '<div class="message-header"><span class="role-icon" aria-hidden="true">💬</span><span class="role-name">' + escapeHtml(displayName) + '</span>' + mentionLine + '<span class="message-time">' + formatTime(msg.timestamp) + '</span></div><div class="message-content">' + escapeHtml(msg.message) + '</div>';
+      el.innerHTML = '<div class="message-header"><span class="role-icon" aria-hidden="true">💬</span><span class="role-name">' + escapeHtml(displayName) + '</span>' + mentionLine + '<span class="message-time">' + formatTime(msg.timestamp) + '</span></div><div class="message-content markdown-body">' + renderMessageContent(msg.message) + '</div>';
       container.appendChild(el);
     });
     container.scrollTop = container.scrollHeight;
     return true;
   }
 
-  function appendAnsweringPlaceholder(roleName) {
+  function appendAnsweringPlaceholder(roleNameOrList) {
     var container = document.getElementById('chat-container');
     if (!container || container.querySelector('.message-answering-placeholder')) return;
-    var displayRole = (roleName && roleName.trim()) ? roleName.trim() : '助手';
+    var displayRole;
+    if (Array.isArray(roleNameOrList) && roleNameOrList.length > 0) {
+      displayRole = roleNameOrList.length === 1 ? roleNameOrList[0] : roleNameOrList.join('、');
+    } else {
+      displayRole = (roleNameOrList && String(roleNameOrList).trim()) ? String(roleNameOrList).trim() : '助手';
+    }
     var el = document.createElement('div');
     el.className = 'message ai message-answering-placeholder';
     el.setAttribute('aria-live', 'polite');
@@ -416,10 +426,24 @@
     container.scrollTop = container.scrollHeight;
   }
 
+  var MENTION_REGEX = /@([a-zA-Z0-9_\-]+(?:\s[a-zA-Z0-9_\-]+)*)/g;
   function getFirstMentionedRole(messageText) {
     if (!messageText || typeof messageText !== 'string') return null;
-    var m = messageText.match(/@([a-zA-Z0-9_]+(?:\s[a-zA-Z0-9_]+)*)/);
+    var m = messageText.match(/@([a-zA-Z0-9_\-]+(?:\s[a-zA-Z0-9_\-]+)*)/);
     return m ? m[1] : null;
+  }
+  /** 解析消息中全部 @ 提及（去重保序），用于一条 @ 多人时展示「正在回答中」。 */
+  function getMentionedRoles(messageText) {
+    if (!messageText || typeof messageText !== 'string') return [];
+    var seen = {};
+    var out = [];
+    var match;
+    MENTION_REGEX.lastIndex = 0;
+    while ((match = MENTION_REGEX.exec(messageText)) !== null) {
+      var name = match[1];
+      if (!seen[name]) { seen[name] = true; out.push(name); }
+    }
+    return out;
   }
 
   function removeAnsweringPlaceholder() {
@@ -448,6 +472,17 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
+  }
+
+  /** 将消息内容按 Markdown 渲染为安全 HTML（换行、段落、代码块等正确显示）。 */
+  function renderMessageContent(text) {
+    if (text == null || text === '') return '';
+    var raw = String(text);
+    if (typeof marked === 'undefined' || typeof DOMPurify === 'undefined') {
+      return escapeHtml(raw).replace(/\n/g, '<br>');
+    }
+    var html = marked.parse(raw, { breaks: true });
+    return DOMPurify.sanitize(html);
   }
 
   async function deleteTask(taskId) {
@@ -537,23 +572,39 @@
     if (hasAt) {
       btn.textContent = '等待回复…';
       btn.disabled = true;
-      var replyingRole = getFirstMentionedRole(message);
-      appendAnsweringPlaceholder(replyingRole);
-      var list0 = await fetch('/api/chat/room/' + sessionId + '/messages').then(function (r) { return r.json(); });
-      var lastCount = list0.length;
+      var mentionedRoles = getMentionedRoles(message);
+      appendAnsweringPlaceholder(mentionedRoles.length ? mentionedRoles : getFirstMentionedRole(message));
       var pollMax = 40;
       var polled = 0;
+      var expectedReplies = mentionedRoles.length;
+      function countAssistantsAfterLastUser(msgs) {
+        if (!msgs || !msgs.length) return 0;
+        var i = msgs.length - 1;
+        while (i >= 0 && msgs[i].role !== 'user') i--;
+        if (i < 0) return 0;
+        var n = 0;
+        for (var j = i + 1; j < msgs.length; j++) {
+          if (msgs[j].role === 'assistant') n++;
+        }
+        return n;
+      }
       while (polled < pollMax) {
         await new Promise(function (resolve) { setTimeout(resolve, 1500); });
         var ok = await loadMessages(sessionId);
         if (!ok) break;
         var list = await fetch('/api/chat/room/' + sessionId + '/messages').then(function (r) { return r.json(); });
-        if (list.length > lastCount && list[list.length - 1].role === 'assistant') {
+        var assistantCount = countAssistantsAfterLastUser(list);
+        if (assistantCount >= expectedReplies) {
           removeAnsweringPlaceholder();
           await loadMessages(sessionId);
           break;
         }
-        appendAnsweringPlaceholder(replyingRole);
+        if (list.length > 0 && list[list.length - 1].role === 'assistant' && expectedReplies === 1) {
+          removeAnsweringPlaceholder();
+          await loadMessages(sessionId);
+          break;
+        }
+        appendAnsweringPlaceholder(mentionedRoles.length ? mentionedRoles : getFirstMentionedRole(message));
         polled++;
       }
       if (polled >= pollMax) removeAnsweringPlaceholder();

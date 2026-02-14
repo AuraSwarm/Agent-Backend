@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 若前端与后端非同源，可在 <html> 上设置 data-api-base="https://后端地址" 使 /api/models 等请求指向正确后端 -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -23,16 +24,28 @@
         <p id="chat-list-loading" class="loading-inline">加载中…</p>
       </div>
     </aside>
-    <main class="main-content">
+    <main class="main-content main-content-chat">
       <div class="chat-intro-header">
         <h1>主对话</h1>
-        <p class="form-hint">对话与任务独立管理。在左侧新建对话或选择一条对话查看；可将对话「转为任务」后在任务中心继续跟进。</p>
+        <p class="form-hint">对话与任务独立管理。在左侧新建对话或选择一条对话查看；可选择下方对话模型（如 Claude）后发送消息，或使用「转为任务」将该对话加入任务中心。</p>
+      </div>
+      <div class="chat-toolbar" id="chat-toolbar" aria-hidden="true">
+        <label for="chat-model-select" class="chat-model-label">对话模型</label>
+        <select id="chat-model-select" class="chat-model-select" title="选择对话使用的模型（如 Claude、通义等）" aria-label="对话模型"></select>
       </div>
       <div id="chat-main" class="chat-main-placeholder" aria-live="polite">
         <div class="empty-state empty-state-main">
           <div class="empty-state-icon" aria-hidden="true">💬</div>
           <p class="empty-state-lead">从左侧选择一条对话</p>
           <p class="empty-state-hint">或点击「新建对话」开始；选择对话后可在此查看消息，并可使用「转为任务」将该对话加入任务中心。</p>
+        </div>
+      </div>
+      <div class="input-area chat-input-area" id="chat-input-area" aria-hidden="true">
+        <div class="input-area-row">
+          <div class="input-with-mention-wrap">
+            <textarea id="chat-user-input" rows="2" placeholder="输入消息，Enter / Shift+Enter 换行，Ctrl+Enter 或 Command+Enter 发送" aria-label="消息内容" autocomplete="off" disabled></textarea>
+          </div>
+          <button type="button" id="chat-send-btn" disabled>发送</button>
         </div>
       </div>
     </main>

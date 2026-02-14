@@ -39,6 +39,14 @@ chat_providers:
     models:
       - claude-3-5-sonnet-20241022
       - claude-3-opus-20240229
+  # Local Claude CLI (e.g. `claude -p "..."`). Set default_chat_provider to "claude-local" to use.
+  claude-local:
+    type: "claude_local"
+    model: "claude-local"
+    timeout: 120
+    command: ["claude", "-p"]
+    models:
+      - claude-local
 default_chat_provider: "dashscope"
 
 # Local tools (GET /tools, POST /tools/execute). Command list; {key} substituted from params.

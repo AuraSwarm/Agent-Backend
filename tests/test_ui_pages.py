@@ -6,6 +6,7 @@
 - UI 流程：任务中心（任务列表 -> 选任务 -> 消息列表 -> 发消息）、角色管理（列表 -> 新建/编辑 -> 保存）所调用的 API 按顺序可通且返回预期结构。
 """
 
+import time
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -361,6 +362,20 @@ def test_ui_task_center_response_shapes(client_task_center: TestClient, task_cen
     assert "role" in m
     assert "message" in m
     assert "timestamp" in m
+    for msg in messages:
+        assert "mentioned_roles" in msg, "task room messages must include mentioned_roles for @ 多人渲染"
+        assert isinstance(msg.get("mentioned_roles"), list)
+
+
+def test_team_task_chat_script_renders_mentioned_roles_and_reply_by_role(client: TestClient):
+    """任务聊天 script.js 渲染一条 @ 多人与多回复：mentioned_roles、reply_by_role、message-mentions。"""
+    r = client.get("/team/script.js")
+    assert r.status_code == 200
+    js = r.text
+    assert "mentioned_roles" in js
+    assert "reply_by_role" in js
+    assert "message-mentions" in js
+    assert "getMentionedRoles" in js or "mentioned_roles" in js
 
 
 def test_team_navigation_links(client: TestClient):
@@ -382,7 +397,7 @@ def test_team_role_form_has_all_inputs(client: TestClient):
     assert "id=\"role-name\"" in html
     assert "id=\"role-description\"" in html
     assert "id=\"role-status\"" in html
-    assert "id=\"role-abilities\"" in html
+    assert "id=\"role-abilities-list\"" in html
     assert "id=\"role-model\"" in html
     assert "id=\"role-prompt\"" in html
     assert "id=\"role-form\"" in html
@@ -420,3 +435,16 @@ def test_team_admin_models_script_and_api(client: TestClient):
     assert r_set_default.status_code == 400
     r_set_default = client.put("/api/admin/models/default", json={"model": "invalid-not-in-list"})
     assert r_set_default.status_code == 400
+
+
+def test_team_admin_models_page_load_time(client: TestClient):
+    """模型清单页加载流程（HTML + GET /api/models）应在合理时间内完成。"""
+    t0 = time.perf_counter()
+    r_page = client.get("/team/admin/models.html")
+    assert r_page.status_code == 200
+    r_api = client.get("/api/models")
+    assert r_api.status_code == 200
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 6.0, "Models page load (HTML + /api/models) took %.2fs" % elapsed
+    data = r_api.json()
+    assert "models" in data and isinstance(data["models"], list)

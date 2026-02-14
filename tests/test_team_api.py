@@ -1,5 +1,6 @@
 """Tests for AI 员工团队 API: /api/tasks, /api/admin/roles, /api/abilities, /api/chat/room/*."""
 
+import time
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -269,7 +270,7 @@ def full_stateful_mock_db():
         "app.storage.db.session_scope", new=scope
     ), patch("app.routers.team_admin.session_scope", new=scope), patch(
         "app.routers.team_room.session_scope", new=scope
-    ):
+    ), patch("app.routers.tools.session_scope", new=scope):
         yield scope
 
 
@@ -377,12 +378,11 @@ def test_api_chat_room_messages_400(client):
     assert r.status_code == 400
 
 
-def test_api_chat_room_messages_200_empty(client):
-    """GET /api/chat/room/{uuid}/messages returns 200 with list (empty when no messages)."""
+def test_api_chat_room_messages_404_unknown_session(client):
+    """GET /api/chat/room/{uuid}/messages returns 404 when session does not exist."""
     sid = str(uuid.uuid4())
     r = client.get("/api/chat/room/" + sid + "/messages")
-    assert r.status_code == 200
-    assert r.json() == []
+    assert r.status_code == 404
 
 
 def test_api_chat_room_message_post_404(client):
@@ -655,6 +655,22 @@ def test_api_models(client):
     assert isinstance(data["models"], list)
 
 
+def test_api_models_response_time(client):
+    """GET /api/models 应在合理时间内返回，避免模型清单页加载过慢。"""
+    t0 = time.perf_counter()
+    r = client.get("/api/models")
+    elapsed = time.perf_counter() - t0
+    assert r.status_code == 200
+    assert elapsed < 5.0, "GET /api/models took %.2fs (model list page would load slowly)" % elapsed
+    data = r.json()
+    assert "models" in data
+    t1 = time.perf_counter()
+    r2 = client.get("/api/models")
+    elapsed2 = time.perf_counter() - t1
+    assert r2.status_code == 200
+    assert elapsed2 < 2.0, "Second GET /api/models (cached config) took %.2fs" % elapsed2
+
+
 def test_api_admin_models_test(client):
     """POST /api/admin/models/test returns 200 and results list with model_id, available, message."""
     r = client.post("/api/admin/models/test")
@@ -668,10 +684,141 @@ def test_api_admin_models_test(client):
         assert "message" in item
 
 
+def test_api_admin_models_test_single_model(client):
+    """POST /api/admin/models/test with body.model tests only that model; returns one result."""
+    list_r = client.get("/api/models")
+    if list_r.status_code != 200:
+        pytest.skip("GET /api/models failed")
+    models = list_r.json().get("models") or []
+    if not models:
+        pytest.skip("no models configured")
+    model_id = models[0]
+    r_one = client.post("/api/admin/models/test", json={"model": model_id})
+    assert r_one.status_code == 200
+    data = r_one.json()
+    assert "results" in data
+    assert len(data["results"]) == 1
+    assert data["results"][0]["model_id"] == model_id
+    assert "available" in data["results"][0]
+    assert "message" in data["results"][0]
+
+
+def test_api_admin_models_test_single_model_not_found_404(client):
+    """POST /api/admin/models/test with body.model that is not in any provider returns 404."""
+    r = client.post("/api/admin/models/test", json={"model": "nonexistent-model-id-xyz"})
+    assert r.status_code == 404
+    assert "not found" in (r.json().get("detail") or "").lower()
+
+
+def test_api_models_list_includes_cursor_local_and_copilot_local(tmp_path, monkeypatch, mock_db):
+    """模型清单 GET /api/models 在配置含 cursor-local、copilot-local 时返回二者，供页面展示与测试。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    (tmp_path / "app.yaml").write_text("config_dir: '.'\n", encoding="utf-8")
+    (tmp_path / "models.yaml").write_text("""
+embedding_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://example.com/embeddings"
+    model: "text-embedding-v3"
+default_embedding_provider: "dashscope"
+chat_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://example.com/v1"
+    model: "qwen-max"
+    models: ["qwen-max"]
+  cursor-local:
+    type: claude_local
+    model: cursor-local
+    command: ["agent", "-p"]
+    models: ["cursor-local"]
+  copilot-local:
+    type: claude_local
+    model: copilot-local
+    command: ["copilot", "-p"]
+    models: ["copilot-local"]
+default_chat_provider: "dashscope"
+summary_strategies: {}
+""", encoding="utf-8")
+    from app.config import loader as config_loader
+    config_loader._models_config = None
+    config_loader._app_settings = None
+    with patch("app.main.validate_required_env"):
+        from app.main import app
+        with TestClient(app) as c:
+            r = c.get("/api/models")
+    assert r.status_code == 200
+    data = r.json()
+    models = data.get("models") or []
+    assert "cursor-local" in models, "模型清单应包含 cursor-local"
+    assert "copilot-local" in models, "模型清单应包含 copilot-local (Copilot-local)"
+
+
+def test_api_admin_models_test_includes_all_providers_including_local(tmp_path, monkeypatch, mock_db):
+    """POST /api/admin/models/test 无 body 时测试所有 provider 的模型，不跳过 claude-local / cursor-local / copilot-local。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    (tmp_path / "app.yaml").write_text("config_dir: '.'\n", encoding="utf-8")
+    (tmp_path / "models.yaml").write_text("""
+embedding_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://example.com/embeddings"
+    model: "text-embedding-v3"
+default_embedding_provider: "dashscope"
+chat_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://example.com/v1"
+    model: "qwen-max"
+    models: ["qwen-max"]
+  claude-local:
+    type: claude_local
+    model: claude-local
+    command: ["claude", "-p"]
+    models: ["claude-local"]
+  cursor-local:
+    type: claude_local
+    model: cursor-local
+    command: ["agent", "-p"]
+    models: ["cursor-local"]
+  copilot-local:
+    type: claude_local
+    model: copilot-local
+    command: ["copilot", "-p"]
+    models: ["copilot-local"]
+default_chat_provider: "dashscope"
+summary_strategies: {}
+""", encoding="utf-8")
+    from app.config import loader as config_loader
+    config_loader._models_config = None
+    config_loader._app_settings = None
+    mock_adapter = MagicMock()
+    mock_adapter.call = _make_async_return(("OK", {}))
+    with patch("app.main.validate_required_env"), patch(
+        "app.adapters.factory.build_chat_adapter", return_value=mock_adapter
+    ):
+        from app.main import app
+        with TestClient(app) as c:
+            r = c.post("/api/admin/models/test")
+    assert r.status_code == 200
+    data = r.json()
+    results = data.get("results") or []
+    model_ids = [x.get("model_id") for x in results if x.get("model_id")]
+    assert "qwen-max" in model_ids, "default provider model should be tested"
+    assert "claude-local" in model_ids, "claude-local should not be skipped"
+    assert "cursor-local" in model_ids, "cursor-local should not be skipped"
+    assert "copilot-local" in model_ids, "copilot-local should not be skipped"
+    assert len(results) == 4
+
+
 def test_api_admin_models_set_default(tmp_path, monkeypatch, mock_db):
     """PUT /api/admin/models/default with valid model updates config and GET /api/models returns new default."""
-    models_yaml = tmp_path / "models.yaml"
-    models_yaml.write_text("""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    (tmp_path / "app.yaml").write_text("config_dir: '.'\n", encoding="utf-8")
+    (tmp_path / "models.yaml").write_text("""
 embedding_providers:
   dashscope:
     api_key_env: "DASHSCOPE_API_KEY"
@@ -692,9 +839,9 @@ chat_providers:
 default_chat_provider: "dashscope"
 summary_strategies: {}
 """, encoding="utf-8")
-    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
     from app.config import loader as config_loader
     config_loader._models_config = None
+    config_loader._app_settings = None
     with patch("app.main.validate_required_env"):
         from app.main import app
         with TestClient(app) as c:
@@ -803,3 +950,105 @@ def test_api_admin_roles_update_invalid_default_model_400(client_full_stateful):
         )
     assert put_r.status_code == 400
     assert "default_model" in (put_r.json().get("detail") or "").lower()
+
+
+def test_chat_provider_anthropic_models_list(tmp_path, monkeypatch, mock_db):
+    """当 default_chat_provider 为 anthropic 时，GET /api/models 返回 Claude 模型列表。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CONFIG_DIR", str(tmp_path))
+    (tmp_path / "app.yaml").write_text("config_dir: '.'\n", encoding="utf-8")
+    (tmp_path / "models.yaml").write_text("""
+embedding_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://example.com/embeddings"
+    model: "text-embedding-v3"
+    dimensions: 1536
+    timeout: 10
+default_embedding_provider: "dashscope"
+chat_providers:
+  dashscope:
+    api_key_env: "DASHSCOPE_API_KEY"
+    endpoint: "https://example.com/v1"
+    model: "qwen-max"
+    models: ["qwen-max"]
+    timeout: 60
+  anthropic:
+    api_key_env: "ANTHROPIC_API_KEY"
+    endpoint: "https://gaccode.com/claudecode"
+    model: "claude-3-5-sonnet-20241022"
+    models:
+      - claude-3-5-sonnet-20241022
+      - claude-3-5-haiku-20241022
+    timeout: 60
+default_chat_provider: "anthropic"
+summary_strategies: {}
+""", encoding="utf-8")
+    from app.config import loader as config_loader
+    config_loader._models_config = None
+    config_loader._app_settings = None
+    with patch("app.main.validate_required_env"):
+        from app.main import app
+        with TestClient(app) as c:
+            r = c.get("/api/models")
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("default") == "claude-3-5-sonnet-20241022"
+    models = data.get("models") or []
+    assert "claude-3-5-sonnet-20241022" in models
+    assert "claude-3-5-haiku-20241022" in models
+
+
+def test_task_room_builds_adapter_with_anthropic_when_default(mock_db):
+    """当 default_chat_provider 为 anthropic 时，任务对话使用 ANTHROPIC_API_KEY 与 anthropic endpoint。"""
+    from unittest.mock import AsyncMock
+
+    config_mock = MagicMock()
+    config_mock.chat_providers = {
+        "anthropic": MagicMock(
+            api_key_env="ANTHROPIC_API_KEY",
+            endpoint="https://gaccode.com/claudecode",
+            model="claude-3-5-sonnet-20241022",
+            models=["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"],
+        )
+    }
+    config_mock.default_chat_provider = "anthropic"
+
+    class AsyncCtx:
+        async def __aenter__(self):
+            db = MagicMock()
+            r = MagicMock()
+            r.scalars.return_value.all.return_value = []
+            db.execute = _make_async_return(r)
+            return db
+
+        async def __aexit__(self, *args):
+            pass
+
+    def session_scope():
+        return AsyncCtx()
+
+    with patch("app.routers.team_room.get_config", return_value=config_mock), patch(
+        "app.routers.team_room.session_scope", new=session_scope
+    ), patch("app.routers.team_room._build_ability_list_context", new=AsyncMock(return_value="")), patch(
+        "app.adapters.cloud.CloudAPIAdapter"
+    ) as AdapterMock:
+        AdapterMock.return_value.call = AsyncMock(return_value=("OK", {}))
+        from app.routers.team_room import _role_reply_via_chat
+        import asyncio
+        out = asyncio.run(_role_reply_via_chat(
+            session_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+            role_name="TestRole",
+            message_text="Hi",
+            system_prompt="You are helpful.",
+            ability_ids=[],
+            default_model=None,
+            tool_result_prefix=None,
+            role_description="",
+        ))
+    assert out == "OK"
+    AdapterMock.assert_called_once()
+    call_kw = AdapterMock.call_args.kwargs
+    assert call_kw.get("api_key_env") == "ANTHROPIC_API_KEY"
+    assert "gaccode.com" in (call_kw.get("endpoint") or "")
+    assert "claude" in (call_kw.get("model") or "").lower()

@@ -16,14 +16,52 @@ chat_providers:
   dashscope:
     api_key_env: DASHSCOPE_API_KEY
     endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1
-    model: qwen3-max
+    model: qwen-flash
     timeout: 60
     models:
-    - qwen-max
+    - qwen-flash
+    - qwen-plux
+    - qwen-plus-latest
+    - qwen-max-latest
     - qwen3-max
     - qwen3-235b-a22b-thinking-2507
     - qwen3-coder-plus
     - qwen2.5-coder-32b-instruct
+    - qwen-deep-research
+  # Claude（需 OpenAI 兼容的代理，如 gaccode；或自建代理暴露 /chat/completions）
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+    endpoint: https://gaccode.com/claudecode
+    model: claude-3-5-sonnet-20241022
+    timeout: 60
+    models:
+    - claude-3-5-sonnet-20241022
+    - claude-3-5-haiku-20241022
+    - claude-3-opus-20240229
+  # 本地 Claude 命令行（如 `claude -p "..."`）。将 default_chat_provider 改为 claude-local 即可使用。
+  claude-local:
+    type: claude_local
+    model: claude-local
+    timeout: 120
+    command: ["claude", "-p"]
+    models:
+    - claude-local
+  # Cursor CLI（如 `agent -p "..."`）。需先安装 Cursor CLI：https://cursor.com/docs/cli/overview
+  cursor-local:
+    type: claude_local
+    model: cursor-local
+    timeout: 120
+    command: ["agent", "-p"]
+    models:
+    - cursor-local
+  # GitHub Copilot CLI（如 `copilot -p "..."` 或 `gh copilot -p "..."`）。需先安装 Copilot CLI。
+  copilot-local:
+    type: claude_local
+    model: copilot-local
+    timeout: 120
+    command: ["copilot", "-p"]
+    models:
+    - copilot-local
 default_chat_provider: dashscope
 local_tools:
 - id: echo
@@ -39,7 +77,7 @@ local_tools:
   - date
 summary_strategies:
   context_compression_v2:
-    model: qwen3-max
+    model: qwen-plux
     prompt_template: "请将对话压缩为JSON，必须包含：\n- decision_points: 核心决策\n- todos: 待办事项\n\
       - entities: {files: [...], tools: [...]}\n- context_state: 当前状态描述\n- code_snippets:\
       \ [\n    {language: \"python\", code: \"...\", purpose: \"实现XX功能\"},\n    ...\n\

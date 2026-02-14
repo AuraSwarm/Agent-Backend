@@ -163,7 +163,8 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 0.5rem 1rem;
+  overflow-x: hidden;
+  padding: 0.25rem 0.5rem 1rem;
 }
 
 .batch-actions {
@@ -223,7 +224,8 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 0.5rem 1rem;
+  overflow-x: hidden;
+  padding: 0.25rem 0.5rem 1rem;
 }
 
 /* ---------- 任务卡片 ---------- */
@@ -232,14 +234,19 @@ body {
   cursor: pointer;
   display: flex;
   align-items: center;
+  justify-content: center;
   margin: 0;
+  min-width: 1.25rem;
+  height: 1.25rem;
 }
 
 .task-card-checkbox {
   width: 1rem;
   height: 1rem;
+  margin: 0;
   cursor: pointer;
   accent-color: var(--accent);
+  flex-shrink: 0;
 }
 
 .task-card {
@@ -254,6 +261,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+  overflow: visible;
+  user-select: none;
 }
 
 .task-card-inner {
@@ -330,6 +339,15 @@ body {
 
 .task-card-role-wrap {
   margin-top: 0.2rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+.task-card-role-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 .task-card-role {
   display: inline-block;
@@ -338,12 +356,24 @@ body {
   border-radius: 4px;
   background: var(--info-bg);
   color: var(--accent);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+.task-meta-line {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.task-meta-sep {
+  margin: 0 0.2rem;
+  color: var(--text-muted);
+}
 .task-time {
   font-size: 0.75rem;
   color: var(--text-muted);
-  margin-top: 0.25rem;
 }
 
 .task-status {
@@ -352,7 +382,10 @@ body {
   border-radius: 10px;
   font-size: 0.7rem;
   font-weight: 500;
-  margin-top: 0.25rem;
+}
+
+.task-card .task-title {
+  user-select: text;
 }
 
 .task-status.in_progress { background: var(--info-bg); color: var(--accent); }
@@ -469,31 +502,50 @@ body.embed .main-content {
 }
 
 .task-assignee-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
 }
 .task-assignee-label {
   font-size: 0.85rem;
   color: var(--text-muted);
   white-space: nowrap;
+  padding-top: 0.25rem;
 }
-.task-assignee-select {
-  padding: 0.25rem 0.5rem;
+.task-assignee-checkbox-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  padding: 0.35rem 0;
+}
+.task-assignee-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
   color: var(--text);
-  min-width: 120px;
+  cursor: pointer;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
 }
-.task-assignee-select[multiple] {
-  min-height: 4rem;
-  vertical-align: top;
-}
-.task-assignee-select:focus {
-  outline: none;
+.task-assignee-option:hover {
   border-color: var(--accent);
+  background: var(--info-bg);
+}
+.task-assignee-option input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.task-assignee-option input[type="checkbox"]:checked + *,
+.task-assignee-option:has(input:checked) {
+  font-weight: 500;
+}
+.task-assignee-option:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--info-bg);
 }
 
 .task-header h1,
@@ -649,6 +701,26 @@ body.embed .main-content {
 }
 
 .message-content { line-height: 1.55; font-size: 0.9rem; }
+/* Markdown 渲染：段落、换行、代码、列表等 */
+.message-content.markdown-body { word-wrap: break-word; }
+.message-content.markdown-body p { margin: 0 0 0.6em; }
+.message-content.markdown-body p:last-child { margin-bottom: 0; }
+.message-content.markdown-body br { display: block; content: ''; margin-top: 0.25em; }
+.message-content.markdown-body pre { margin: 0.5em 0; padding: 0.75rem 1rem; overflow-x: auto; border-radius: 8px; background: var(--code-bg, rgba(0,0,0,0.06)); font-size: 0.85em; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.message-content.markdown-body code { padding: 0.15em 0.4em; border-radius: 4px; background: var(--code-bg, rgba(0,0,0,0.06)); font-size: 0.9em; }
+.message-content.markdown-body pre code { padding: 0; background: none; }
+.message-content.markdown-body ul, .message-content.markdown-body ol { margin: 0.4em 0; padding-left: 1.5em; }
+.message-content.markdown-body li { margin: 0.2em 0; }
+.message-content.markdown-body h1, .message-content.markdown-body h2, .message-content.markdown-body h3 { margin: 0.75em 0 0.4em; font-size: 1.1em; font-weight: 600; }
+.message-content.markdown-body h1:first-child, .message-content.markdown-body h2:first-child, .message-content.markdown-body h3:first-child { margin-top: 0; }
+.message-content.markdown-body blockquote { margin: 0.5em 0; padding-left: 1em; border-left: 3px solid var(--border); color: var(--text-muted); }
+.message-content.markdown-body hr { margin: 0.75em 0; border: none; border-top: 1px solid var(--border); }
+.message-content.markdown-body a { color: var(--link, #0d6efd); text-decoration: none; }
+.message-content.markdown-body a:hover { text-decoration: underline; }
+.message-content.markdown-body strong { font-weight: 600; }
+.message-content.markdown-body table { border-collapse: collapse; width: 100%; margin: 0.5em 0; font-size: 0.9em; }
+.message-content.markdown-body th, .message-content.markdown-body td { border: 1px solid var(--border); padding: 0.35em 0.6em; text-align: left; }
+.message-content.markdown-body th { background: var(--surface); font-weight: 600; }
 
 .message-mentions {
   color: var(--text-muted);
@@ -858,6 +930,42 @@ body.embed .main-content {
   opacity: 1;
 }
 
+.role-card-test {
+  flex-shrink: 0;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.role-card-test:hover {
+  background: var(--border);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.role-card-copy {
+  flex-shrink: 0;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.role-card-copy:hover {
+  background: var(--border);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .role-card:hover {
   border-color: var(--accent);
   background: var(--border);
@@ -867,6 +975,15 @@ body.embed .main-content {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+.role-test-loading { color: var(--text-muted); }
+.role-test-section { margin-bottom: 1rem; }
+.role-test-section h3 { margin: 0 0 0.5rem; font-size: 1rem; }
+.role-test-ok { color: var(--success, #0a0); }
+.role-test-fail { color: var(--error); }
+.role-test-detail { margin: 0.5rem 0 0; font-size: 0.9rem; color: var(--text-muted); white-space: pre-wrap; word-break: break-word; }
+.role-test-abilities { margin: 0; padding-left: 1.25rem; }
+.role-test-abilities li { margin-bottom: 0.35rem; }
 
 .role-header {
   display: flex;
@@ -1309,6 +1426,36 @@ body.embed .main-content {
   overflow-y: auto;
 }
 
+.modal-content-narrow {
+  max-width: 32rem;
+}
+
+.link-like {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+  color: var(--link-color, #2563eb);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.link-like:hover {
+  color: var(--link-hover, #1d4ed8);
+}
+
+.model-fail-message-pre {
+  margin: 0;
+  padding: 0.75rem;
+  background: var(--bg-muted, #f1f5f9);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
 .form-group {
   margin-bottom: 1rem;
 }
@@ -1452,6 +1599,51 @@ space: nowrap;
 }
 .chat-msg { display: flex; gap: 0.5rem; align-items: flex-start; }
 .chat-msg-role { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); flex-shrink: 0; }
+.chat-msg-model {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 400;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  background: var(--border);
+  flex-shrink: 0;
+}
 .chat-msg-content { font-size: 0.9rem; line-height: 1.5; }
 .chat-msg-user .chat-msg-role { color: var(--accent); }
+.chat-msg-thinking .chat-msg-content { color: var(--text-muted); font-style: italic; }
 .chat-convert-bar { padding-top: 0.75rem; border-top: 1px solid var(--border); }
+
+/* 主对话页：模型选择 + 输入区 */
+.main-content-chat {
+  padding: 1rem;
+  overflow: hidden;
+}
+.main-content-chat .chat-intro-header { flex-shrink: 0; }
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  margin-bottom: 0.75rem;
+}
+.chat-toolbar[aria-hidden="true"] { display: none; }
+.chat-model-label {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.chat-model-select {
+  padding: 0.4rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  min-width: 12rem;
+}
+.chat-main-placeholder {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.chat-input-area[aria-hidden="true"] { display: none; }

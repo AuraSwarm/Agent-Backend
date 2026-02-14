@@ -196,14 +196,9 @@ def cmd_restart(args: argparse.Namespace) -> int:
 
 
 async def _try_one_model(provider_name: str, prov: Any, model: str, prompt: str) -> tuple[str, bool, str]:
-    """Call one model; return (model, ok, message). Uses explicit check for timeout/response."""
-    from app.adapters.cloud import CloudAPIAdapter
-    adapter = CloudAPIAdapter(
-        api_key_env=prov.api_key_env,
-        endpoint=prov.endpoint,
-        model=model,
-        timeout=getattr(prov, "timeout", 60),
-    )
+    """Call one model; return (model, ok, message). Uses build_chat_adapter (cloud or claude_local)."""
+    from app.adapters.factory import build_chat_adapter
+    adapter = build_chat_adapter(prov, model)
     result = await adapter.call(prompt, model=model)
     out = result[0] if isinstance(result, tuple) else result
     msg = (out or "").strip()[:80]

@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy import insert
 
-from app.adapters.cloud import CloudAPIAdapter
 from app.config.loader import get_config
 from app.storage.db import get_session_factory, session_scope
 from app.storage.long_term import get_long_term_backend, is_long_term_oss
@@ -63,8 +62,13 @@ class ChatRequest(BaseModel):
     deep_research: bool = False
 
 
-async def _persist_chat_messages(session_id: str, user_content: str, assistant_content: str) -> None:
-    """Save user and assistant messages to DB."""
+async def _persist_chat_messages(
+    session_id: str,
+    user_content: str,
+    assistant_content: str,
+    model: str | None = None,
+) -> None:
+    """Save user and assistant messages to DB. model 为回复使用的对话模型 ID，用于前端展示。"""
     try:
         sid = uuid.UUID(session_id)
     except ValueError:
@@ -89,6 +93,7 @@ async def _persist_chat_messages(session_id: str, user_content: str, assistant_c
                 session_id=sid,
                 role="assistant",
                 content=assistant_content,
+                model=model,
             )
         )
         r = await db.execute(select(Message).where(Message.session_id == sid).order_by(Message.created_at.asc()))
@@ -144,17 +149,25 @@ async def chat(req: ChatRequest):
             raise HTTPException(status_code=404, detail="session not found")
         if _is_task_session(s):
             raise HTTPException(status_code=404, detail="use POST /api/chat/room/{id}/message for tasks")
+    from app.adapters.factory import build_chat_adapter
+    from app.routers.team_room import _resolve_provider_for_model
+
     config = get_config()
     chat_providers = getattr(config, "chat_providers", {}) or {}
     default_chat = config.default_chat_provider or "dashscope"
     if default_chat not in chat_providers:
         raise HTTPException(status_code=503, detail="no chat provider configured")
-    prov = chat_providers[default_chat]
-    adapter = CloudAPIAdapter(
-        api_key_env=prov.api_key_env,
-        endpoint=prov.endpoint,
-        model=req.model or prov.model,
-    )
+    default_prov = chat_providers[default_chat]
+    model = req.model or getattr(default_prov, "model", None)
+    if not model:
+        models_list = getattr(default_prov, "models", None) or []
+        model = models_list[0] if models_list else None
+    if not model:
+        raise HTTPException(status_code=503, detail="no chat model configured")
+    prov_name, prov = _resolve_provider_for_model(config, model)
+    if prov_name is None:
+        prov_name, prov = default_chat, default_prov
+    adapter = build_chat_adapter(prov, model)
     messages = [{"role": m.role, "content": m.content} for m in req.messages]
     prompt = req.messages[-1].content if req.messages else ""
     # Inject long-term memory (profile + knowledge) when using OSS
@@ -178,7 +191,7 @@ async def chat(req: ChatRequest):
             t0 = time.perf_counter()
             text, usage = await adapter.call(prompt, messages=messages, **extra)
             duration_ms = round((time.perf_counter() - t0) * 1000, 1)
-            await _persist_chat_messages(req.session_id, prompt, text)
+            await _persist_chat_messages(req.session_id, prompt, text, model=model)
             return {
                 "choices": [{"message": {"role": "assistant", "content": text}}],
                 "usage": usage,
@@ -213,8 +226,13 @@ async def chat(req: ChatRequest):
             err_msg = _chat_error_detail(e)
             yield f"data: {json.dumps({'choices': [{'delta': {'content': err_msg}}]})}\n\n"
             full_content = ""
+        except Exception as e:
+            logger.warning("chat_stream_error", error=str(e))
+            err_msg = str(e) or "回复失败"
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': err_msg}}]})}\n\n"
+            full_content = ""
         if full_content:
-            await _persist_chat_messages(req.session_id, prompt, full_content)
+            await _persist_chat_messages(req.session_id, prompt, full_content, model=model)
         duration_ms = round((time.perf_counter() - t0) * 1000, 1)
         yield f"data: {json.dumps({'usage': usage, 'duration_ms': duration_ms})}\n\n"
         yield "data: [DONE]\n\n"

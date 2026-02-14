@@ -37,9 +37,16 @@
         (role.default_model ? '<div class="role-model">模型: ' + escapeHtml(role.default_model) + '</div>' : '') +
         '<div class="role-abilities">' + (role.abilities || []).map(function (a) { return '<span class="ability-tag">' + escapeHtml(a) + '</span>'; }).join('') + '</div>' +
         '</div>' +
+        '<button type="button" class="role-card-copy" aria-label="复制角色" title="复制角色配置">复制</button>' +
+        '<button type="button" class="role-card-test" aria-label="测试角色" title="测试对话与能力">测试</button>' +
         '<button type="button" class="role-card-delete" aria-label="删除角色" title="删除角色">×</button>';
-      card.addEventListener('click', function (e) { if (!e.target.closest('.role-card-delete')) openRoleEdit(role.name); });
-      card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!e.target.closest('.role-card-delete')) openRoleEdit(role.name); } });
+      card.addEventListener('click', function (e) {
+        if (e.target.closest('.role-card-delete') || e.target.closest('.role-card-test') || e.target.closest('.role-card-copy')) return;
+        openRoleEdit(role.name);
+      });
+      card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!e.target.closest('.role-card-delete') && !e.target.closest('.role-card-test') && !e.target.closest('.role-card-copy')) openRoleEdit(role.name); } });
+      card.querySelector('.role-card-copy').addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); copyRole(role.name, this); });
+      card.querySelector('.role-card-test').addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); testRole(role.name); });
       card.querySelector('.role-card-delete').addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); deleteRole(role.name); });
       list.appendChild(card);
     });
@@ -55,6 +62,85 @@
     closeModal();
     await loadRoles();
   }
+
+  async function copyRole(roleName, btnEl) {
+    var response = await fetch('/api/admin/roles/' + encodeURIComponent(roleName));
+    if (!response.ok) {
+      alert('获取角色详情失败，无法复制');
+      return;
+    }
+    var role = await response.json();
+    var lines = [
+      '角色名: ' + (role.name || ''),
+      '描述: ' + (role.description || ''),
+      '状态: ' + (role.status || 'enabled'),
+      '绑定模型: ' + (role.default_model || '（使用全局默认）'),
+      '绑定能力: ' + (role.abilities && role.abilities.length ? role.abilities.join(', ') : '无'),
+      '系统提示词:',
+      role.system_prompt || '(无)'
+    ];
+    var text = lines.join('\n');
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      var orig = btnEl.textContent;
+      btnEl.textContent = '已复制';
+      btnEl.disabled = true;
+      setTimeout(function () { btnEl.textContent = orig; btnEl.disabled = false; }, 1500);
+    } else {
+      alert('当前浏览器不支持复制，请手动复制：\n\n' + text);
+    }
+  }
+
+  function openTestResultModal() {
+    var modal = document.getElementById('role-test-result-modal');
+    if (modal) {
+      modal.classList.add('is-open');
+      modal.setAttribute('aria-hidden', 'false');
+      modal.style.display = 'flex';
+    }
+  }
+  function closeTestResultModal() {
+    var modal = document.getElementById('role-test-result-modal');
+    if (modal) {
+      modal.classList.remove('is-open');
+      modal.setAttribute('aria-hidden', 'true');
+      modal.style.display = 'none';
+    }
+  }
+
+  async function testRole(roleName) {
+    var bodyEl = document.getElementById('role-test-result-body');
+    var titleEl = document.getElementById('role-test-result-title');
+    if (titleEl) titleEl.textContent = '角色测试结果：' + roleName;
+    if (bodyEl) bodyEl.innerHTML = '<p class="role-test-loading">测试中…（基础对话与能力检测可能需要几秒）</p>';
+    openTestResultModal();
+    var response = await fetch('/api/admin/roles/' + encodeURIComponent(roleName) + '/test', { method: 'POST' });
+    var data = { dialogue_ok: false, dialogue_message: '', abilities: [] };
+    if (response.ok) {
+      data = await response.json();
+    } else {
+      var err = await response.json().catch(function () { return {}; });
+      data.dialogue_message = '请求失败: ' + (err.detail || response.status);
+    }
+    var dialogueLabel = data.dialogue_ok ? '通过' : '未通过';
+    var dialogueClass = data.dialogue_ok ? 'role-test-ok' : 'role-test-fail';
+    var html = '<div class="role-test-section"><h3>基础对话</h3><p class="' + dialogueClass + '">' + dialogueLabel + '</p>';
+    if (data.dialogue_message) html += '<p class="role-test-detail">' + escapeHtml(data.dialogue_message) + '</p>';
+    html += '</div><div class="role-test-section"><h3>能力</h3><ul class="role-test-abilities">';
+    (data.abilities || []).forEach(function (a) {
+      var c = a.ok ? 'role-test-ok' : 'role-test-fail';
+      html += '<li class="' + c + '"><span>' + escapeHtml(a.id) + '</span>: ' + (a.ok ? '通过' : '未通过');
+      if (a.message) html += ' — ' + escapeHtml(a.message);
+      html += '</li>';
+    });
+    html += '</ul></div>';
+    if (bodyEl) bodyEl.innerHTML = html;
+  }
+
+  document.getElementById('role-test-result-close').addEventListener('click', closeTestResultModal);
+  document.getElementById('role-test-result-modal').addEventListener('click', function (e) {
+    if (e.target === document.getElementById('role-test-result-modal')) closeTestResultModal();
+  });
 
   async function openRoleEdit(roleName) {
     var url = '/api/admin/roles/' + encodeURIComponent(roleName);
@@ -150,6 +236,19 @@
     loadModelsSelect('');
     loadAbilitiesSelect([]);
   });
+
+  async function reloadConfig() {
+    var btn = document.getElementById('config-reload-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '刷新中…'; }
+    var r = await fetch('/admin/reload', { method: 'POST' });
+    if (btn) { btn.disabled = false; btn.textContent = '刷新配置'; }
+    if (!r.ok) {
+      alert('刷新配置失败：' + (r.statusText || '请重试'));
+      return;
+    }
+    alert('配置已刷新。编辑角色时模型与能力选项将使用最新配置。');
+  }
+  document.getElementById('config-reload-btn').addEventListener('click', reloadConfig);
 
   function onCloseModal() { closeModal(); }
   document.getElementById('modal-close-btn').addEventListener('click', onCloseModal);
