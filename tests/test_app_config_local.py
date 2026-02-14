@@ -8,6 +8,7 @@ import pytest
 from app.config.loader import (
     get_app_settings,
     _app_config_path,
+    reset_app_settings_cache,
     validate_required_env,
 )
 from app.config.schemas import AppSettings
@@ -38,6 +39,59 @@ def test_app_config_path_default():
     finally:
         if prev is not None:
             os.environ["CONFIG_DIR"] = prev
+
+
+def test_test_database_url_overrides_config(tmp_path):
+    """When TEST_DATABASE_URL is set, get_app_settings() uses it for database_url (test DB isolation)."""
+    (tmp_path / "app.yaml").write_text("""
+database_url: "postgresql+asyncpg://postgres:postgres@localhost:5432/agent_backend"
+config_dir: "config"
+""")
+    test_url = "postgresql+asyncpg://postgres:postgres@localhost:5432/agent_backend_test"
+    prev_env = {}
+    for key in ("CONFIG_DIR", "TEST_DATABASE_URL"):
+        prev_env[key] = os.environ.pop(key, None)
+    try:
+        os.environ["CONFIG_DIR"] = str(tmp_path)
+        os.environ["TEST_DATABASE_URL"] = test_url
+        reset_app_settings_cache()
+        settings = get_app_settings()
+        assert settings.database_url == test_url
+    finally:
+        for k, v in prev_env.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+        reset_app_settings_cache()
+
+
+def test_test_oss_and_minio_bucket_override_config(tmp_path):
+    """When TEST_OSS_BUCKET / TEST_MINIO_BUCKET are set, get_app_settings() uses them (test bucket isolation)."""
+    (tmp_path / "app.yaml").write_text("""
+database_url: "postgresql+asyncpg://postgres:postgres@localhost:5432/agent_backend"
+oss_bucket: "aura-mem"
+minio_bucket: "archives"
+config_dir: "config"
+""")
+    prev_env = {}
+    for key in ("CONFIG_DIR", "TEST_OSS_BUCKET", "TEST_MINIO_BUCKET"):
+        prev_env[key] = os.environ.pop(key, None)
+    try:
+        os.environ["CONFIG_DIR"] = str(tmp_path)
+        os.environ["TEST_OSS_BUCKET"] = "aura-mem-test"
+        os.environ["TEST_MINIO_BUCKET"] = "archives-test"
+        reset_app_settings_cache()
+        settings = get_app_settings()
+        assert settings.oss_bucket == "aura-mem-test"
+        assert settings.minio_bucket == "archives-test"
+    finally:
+        for k, v in prev_env.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+        reset_app_settings_cache()
 
 
 def test_get_app_settings_defaults_when_no_app_yaml(monkeypatch):

@@ -35,6 +35,11 @@ def _real_api_configured() -> bool:
     return bool(os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("QWEN_API_KEY"))
 
 
+def _anthropic_configured() -> bool:
+    """Key 可能来自配置（get_app_settings 会将其写入 env），或已在 env 中。"""
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
 @pytest.fixture(scope="module")
 def real_ai_env():
     """Load env from file if present; set DASHSCOPE_API_KEY from QWEN_API_KEY if needed."""
@@ -64,6 +69,42 @@ def require_real_api_key(real_ai_env):
         pytest.fail(REAL_API_KEY_ERROR)
     prev = os.environ.get("CONFIG_DIR")
     os.environ["CONFIG_DIR"] = PROJECT_CONFIG_DIR
+    yield
+    if prev is not None:
+        os.environ["CONFIG_DIR"] = prev
+    else:
+        os.environ.pop("CONFIG_DIR", None)
+
+
+CLAUDE_API_KEY_ERROR = (
+    "Claude API key 未配置。请在配置项中设置 anthropic_api_key："
+    "后端 config/app.yaml，或 Aura 的 config/aura.yaml（Aura 会写入生成的后端配置）。"
+    "不要依赖环境变量 ANTHROPIC_API_KEY。"
+)
+
+
+def _config_dir_for_claude():
+    """优先使用 Aura 生成的后端配置（含 aura.yaml 中的 anthropic_api_key），否则用项目 config。
+    若已设置 ANTHROPIC_API_KEY 环境变量（本地 debug），则用项目 config 以免覆盖 env。"""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return PROJECT_CONFIG_DIR
+    aura_generated = Path(__file__).resolve().parent.parent.parent / "Aura-Swarm" / ".aura" / "generated_config"
+    if (aura_generated / "app.yaml").exists():
+        return str(aura_generated)
+    return PROJECT_CONFIG_DIR
+
+
+@pytest.fixture
+def require_claude_api_key(real_ai_env):
+    """anthropic_api_key 可来自配置（app.yaml / Aura）或仅来自环境变量（本地 debug）。"""
+    from app.config.loader import get_app_settings, reset_app_settings_cache
+
+    prev = os.environ.get("CONFIG_DIR")
+    os.environ["CONFIG_DIR"] = _config_dir_for_claude()
+    reset_app_settings_cache()
+    get_app_settings()  # 从 config 加载；若 config 无 key 则保留已有 ANTHROPIC_API_KEY
+    if not _anthropic_configured():
+        pytest.skip(CLAUDE_API_KEY_ERROR)
     yield
     if prev is not None:
         os.environ["CONFIG_DIR"] = prev
@@ -108,9 +149,10 @@ def _get_chat_adapter():
 @pytest.mark.real_ai
 @pytest.mark.asyncio
 async def test_chat_non_stream(require_real_api_key):
-    """Real API: non-streaming chat returns non-empty text."""
+    """Real API: non-streaming chat returns (content, usage) with non-empty text."""
     adapter = _get_chat_adapter()
-    text = await adapter.call("Say exactly: ok")
+    result = await adapter.call("Say exactly: ok")
+    text = result[0] if isinstance(result, tuple) else result
     assert isinstance(text, str)
     assert len(text.strip()) > 0
 
@@ -136,7 +178,8 @@ async def test_chat_with_messages(require_real_api_key):
     messages = [
         {"role": "user", "content": "Say the number 42 and nothing else."},
     ]
-    text = await adapter.call("Ignore previous. Say 99.", messages=messages)
+    result = await adapter.call("Ignore previous. Say 99.", messages=messages)
+    text = result[0] if isinstance(result, tuple) else result
     assert isinstance(text, str)
     assert len(text.strip()) > 0
 
@@ -211,7 +254,8 @@ async def test_chat_each_model(require_real_api_key, model):
         model=model,
         timeout=60,
     )
-    text = await adapter.call("Say OK")
+    result = await adapter.call("Say OK")
+    text = result[0] if isinstance(result, tuple) else result
     assert isinstance(text, str)
     assert len(text.strip()) > 0
 
@@ -239,3 +283,38 @@ async def test_adapter_estimate_tokens(integration_config):
     n = adapter._estimate_tokens("hello world")
     assert isinstance(n, int)
     assert n >= 1
+
+
+@pytest.mark.real_ai
+@pytest.mark.asyncio
+async def test_chat_claude_real_inference(require_claude_api_key):
+    """Real API: 与 Claude 模型进行一次真实对话。配置来自 config（app.yaml / Aura aura.yaml），需 anthropic provider。"""
+    from app.config.loader import get_config
+    from app.adapters.cloud import CloudAPIAdapter
+    from httpx import HTTPStatusError
+
+    config = get_config()
+    providers = getattr(config, "chat_providers", {}) or {}
+    if "anthropic" not in providers:
+        pytest.skip("config/models.yaml 中未配置 chat_providers.anthropic")
+    prov = providers["anthropic"]
+    model = getattr(prov, "model", None) or (
+        (getattr(prov, "models", None) or [])[0] if getattr(prov, "models", None) else "claude-3-5-sonnet-20241022"
+    )
+    adapter = CloudAPIAdapter(
+        api_key_env=getattr(prov, "api_key_env", "ANTHROPIC_API_KEY"),
+        endpoint=(getattr(prov, "endpoint", "") or "").rstrip("/"),
+        model=model,
+        timeout=getattr(prov, "timeout", 60),
+    )
+    try:
+        result = await adapter.call("Say OK in one word.")
+    except HTTPStatusError as e:
+        if e.response.status_code in (502, 503):
+            pytest.skip(f"Claude 代理暂时不可用 ({e.response.status_code})，配置与请求已验证")
+        if e.response.status_code == 401:
+            pytest.skip("ANTHROPIC_API_KEY 无效或已过期（401）。请使用有效 key（环境变量或 config 中的 anthropic_api_key）")
+        raise
+    text = result[0] if isinstance(result, tuple) else result
+    assert isinstance(text, str), "Claude 应返回字符串"
+    assert len(text.strip()) > 0, "与 Claude 的对话应返回非空内容"

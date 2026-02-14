@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模型管理 - AI 员工协作中心</title>
+  <link rel="stylesheet" href="/team/style.css">
+</head>
+<body>
+  <script>if (window.location.search.indexOf('embed=1') !== -1) document.body.classList.add('embed');</script>
+  <div class="container">
+    <aside class="sidebar sidebar-admin">
+      <nav class="content-tabs content-tabs-vertical" aria-label="Task, Role, Ability, Model">
+        <a href="/team/" class="content-tab" title="任务中心">Task</a>
+        <a href="/team/admin/roles.html" class="content-tab" title="员工角色管理">Role</a>
+        <a href="/team/admin/abilities.html" class="content-tab" title="能力管理">Ability</a>
+        <a href="/team/admin/models.html" class="content-tab active" title="模型管理">Model</a>
+      </nav>
+    </aside>
+    <main class="main-content">
+      <div class="content-tabs" role="tablist" aria-label="Task, Role, Ability, Model">
+        <a href="/team/" class="content-tab" role="tab" title="任务中心">Task</a>
+        <a href="/team/admin/roles.html" class="content-tab" role="tab" title="员工角色管理">Role</a>
+        <a href="/team/admin/abilities.html" class="content-tab" role="tab" title="能力管理">Ability</a>
+        <a href="/team/admin/models.html" class="content-tab active" role="tab" title="模型管理">Model</a>
+      </div>
+      <div class="page-header">
+        <h1>模型管理</h1>
+        <div class="page-header-actions">
+          <button type="button" id="models-reload-config-btn" class="btn-outline-sm" title="重新加载 config，使 models.yaml 等配置生效">刷新配置</button>
+          <button type="button" id="models-test-btn" class="btn-outline-sm" title="测试当前配置的对话模型可用性">测试可用性</button>
+        </div>
+      </div>
+      <div class="models-page-intro">
+        <p class="form-hint">以下为 config 中配置的对话模型，供角色绑定与 /chat 使用。修改 <code>config/models.yaml</code> 后点击「刷新配置」或重载后端使列表更新。</p>
+      </div>
+      <div class="models-section">
+        <h2 class="models-section-title" id="models-section-title">模型清单</h2>
+        <p id="models-loading" class="loading-inline">加载中…</p>
+        <div id="models-list" class="models-list" aria-live="polite" aria-busy="false" aria-labelledby="models-section-title"></div>
+      </div>
+    </main>
+  </div>
+
+  <div id="model-fail-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="model-fail-modal-title" aria-hidden="true" style="display: none;">
+    <div class="modal-content modal-content-narrow">
+      <div class="modal-header">
+        <h2 id="model-fail-modal-title">测试失败详情</h2>
+        <button type="button" class="modal-close" id="model-fail-modal-close" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="form-group"><strong>模型</strong>: <span id="model-fail-modal-model"></span></p>
+        <p class="form-group"><strong>报错原因</strong>:</p>
+        <pre id="model-fail-modal-message" class="model-fail-message-pre"></pre>
+      </div>
+    </div>
+  </div>
+  <script src="/team/admin/admin-models.js"></script>
+</body>
+</html>

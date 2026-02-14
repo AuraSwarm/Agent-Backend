@@ -142,7 +142,7 @@ echo "[init] mode=$CMD"
 export CONFIG_DIR="${CONFIG_DIR:-config}"
 if [ -f "${CONFIG_DIR}/app.yaml" ]; then
   echo "[init] Loading config from ${CONFIG_DIR}/app.yaml"
-  eval "$(python -c "
+  _cfg_out=$(python -c "
 import os, sys
 sys.path.insert(0, os.getcwd())
 os.environ.setdefault('CONFIG_DIR', 'config')
@@ -160,7 +160,8 @@ print('export CONFIG_SKIP_DB_WAIT=%s' % ('1' if s.skip_db_wait else '0'))
 print('export CONFIG_NO_DB_PASSWORD=%s' % ('1' if s.no_db_password else '0'))
 print('export CONFIG_USE_LOCAL_POSTGRES=%s' % ('1' if s.use_local_postgres else '0'))
 print('export CONFIG_DEV=%s' % ('1' if s.dev else '0'))
-" 2>/dev/null)" || true
+" 2>&1) || { echo "[init] Failed to load config:" >&2; echo "$_cfg_out" >&2; exit 1; }
+  eval "$_cfg_out"
 fi
 # Env overrides config; config overrides script defaults (when app.yaml is loaded)
 SKIP_DB_WAIT="${SKIP_DB_WAIT:-${CONFIG_SKIP_DB_WAIT:-0}}"

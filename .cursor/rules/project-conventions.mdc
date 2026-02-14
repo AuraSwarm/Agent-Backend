@@ -1,0 +1,16 @@
+---
+description: Agent-Backend 项目约定与长线迭代说明
+alwaysApply: true
+---
+
+# Agent-Backend 项目约定与长线迭代
+
+- **规则与 Hook 随仓库版本化**，便于团队长线迭代更新。
+- **Cursor 规则**：在 `.cursor/rules/` 中维护 `.mdc` 文件，按需增删改即可生效；`.gitignore` 仅版本化 `rules/`，其余 Cursor 缓存/本地不提交。
+- **Git Hooks**：在 `hooks/` 中维护脚本，执行 `./scripts/install-hooks.sh` 安装后可在 pull/merge 等时机自动执行（见 `hooks/README.md`）。
+- **本地与敏感**：`.local/`、`config/app.yaml`、`.env` 等已加入 `.gitignore`，不提交。
+
+## 迭代建议
+
+- 遇到重复约定或新约定时，在 `.cursor/rules/` 新增或修改对应规则。
+- 需要自动化检查或同步时，在 `hooks/` 添加或修改对应 hook 并重新运行 `install-hooks.sh`。

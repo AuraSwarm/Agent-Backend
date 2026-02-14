@@ -4,7 +4,8 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text
+from sqlalchemy.sql import not_
 
 from app.embedding.engine import get_embedding
 from app.storage.db import get_session_factory, log_audit, session_scope
@@ -43,6 +44,7 @@ class SessionListItem(BaseModel):
 class MessageItem(BaseModel):
     role: str
     content: str
+    model: str | None = None  # 仅 assistant 消息有值，表示使用的对话模型 ID
 
 
 class UpdateSessionRequest(BaseModel):
@@ -60,19 +62,42 @@ async def create_session(body: CreateSessionRequest | None = None) -> CreateSess
         return CreateSessionResponse(session_id=str(s.id))
 
 
+def _is_task_session(s) -> bool:
+    return bool((getattr(s, "metadata_", None) or {}).get("is_task"))
+
+
+def _chat_only_session_filter():
+    """仅对话：metadata 为空或不含 is_task=true。与任务在底层完全分离。"""
+    return or_(
+        Session.metadata_.is_(None),
+        not_(Session.metadata_.contains({"is_task": True})),
+    )
+
+
 @router.get("", response_model=list[SessionListItem])
-async def list_sessions(limit: int = 50) -> list[SessionListItem]:
-    """List recent sessions with first/last message preview and topic summary."""
+async def list_sessions(limit: int = 50, scope: str = "chat") -> list[SessionListItem]:
+    """List sessions. scope=chat 仅返回对话（DB 层排除任务）；scope=all 返回全部。"""
     limit = min(limit, 100)
+    scope = (scope or "chat").strip().lower()
+    if scope != "all":
+        scope = "chat"
     factory = get_session_factory()
     async with factory() as db:
-        r = await db.execute(
+        q = (
             select(Session)
             .where(Session.status == 1)
             .order_by(Session.updated_at.desc())
-            .limit(limit)
         )
-        sessions = r.scalars().all()
+        if scope == "chat":
+            q = q.where(_chat_only_session_filter()).limit(limit * 4)
+        else:
+            q = q.limit(limit)
+        r = await db.execute(q)
+        sessions = list(r.scalars().all())
+    if scope == "chat":
+        sessions = [s for s in sessions if not _is_task_session(s)][:limit]
+    else:
+        sessions = sessions[:limit]
     if not sessions:
         return []
     ids = [s.id for s in sessions]
@@ -115,23 +140,7 @@ async def list_sessions(limit: int = 50) -> list[SessionListItem]:
 
 @router.get("/{session_id}/messages", response_model=list[MessageItem])
 async def get_session_messages(session_id: str) -> list[MessageItem]:
-    """Get messages for a session."""
-    try:
-        sid = uuid.UUID(session_id)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="session not found")
-    factory = get_session_factory()
-    async with factory() as db:
-        r = await db.execute(
-            select(Message).where(Message.session_id == sid).order_by(Message.created_at.asc())
-        )
-        messages = r.scalars().all()
-    return [MessageItem(role=m.role, content=m.content or "") for m in messages]
-
-
-@router.patch("/{session_id}")
-async def update_session(session_id: str, body: UpdateSessionRequest) -> dict:
-    """Update session (e.g. title)."""
+    """Get messages for a conversation. 仅限对话；任务请用 GET /api/chat/room/{id}/messages。"""
     try:
         sid = uuid.UUID(session_id)
     except ValueError:
@@ -142,6 +151,39 @@ async def update_session(session_id: str, body: UpdateSessionRequest) -> dict:
         s = r.scalar_one_or_none()
         if not s:
             raise HTTPException(status_code=404, detail="session not found")
+        if _is_task_session(s):
+            raise HTTPException(status_code=404, detail="use GET /api/chat/room/{id}/messages for tasks")
+        r2 = await db.execute(
+            select(Message).where(Message.session_id == sid).order_by(Message.created_at.asc())
+        )
+        messages = r2.scalars().all()
+    def _msg_model(m) -> str | None:
+        if m.role != "assistant":
+            return None
+        v = getattr(m, "model", None)
+        return v if isinstance(v, str) else None
+
+    return [
+        MessageItem(role=m.role, content=m.content or "", model=_msg_model(m))
+        for m in messages
+    ]
+
+
+@router.patch("/{session_id}")
+async def update_session(session_id: str, body: UpdateSessionRequest) -> dict:
+    """Update session (e.g. title). 仅限对话，任务请用 PATCH /api/tasks/{id}。"""
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="session not found")
+    factory = get_session_factory()
+    async with factory() as db:
+        r = await db.execute(select(Session).where(Session.id == sid))
+        s = r.scalar_one_or_none()
+        if not s:
+            raise HTTPException(status_code=404, detail="session not found")
+        if _is_task_session(s):
+            raise HTTPException(status_code=404, detail="use PATCH /api/tasks/{id} for tasks")
         if body.title is not None:
             s.title = body.title
         await db.commit()
@@ -150,7 +192,7 @@ async def update_session(session_id: str, body: UpdateSessionRequest) -> dict:
 
 @router.delete("/{session_id}")
 async def delete_session(session_id: str) -> dict:
-    """Delete a session and its messages/summaries."""
+    """Delete a session and its messages/summaries. 仅限对话，任务请用 DELETE /api/tasks/{id}。"""
     try:
         sid = uuid.UUID(session_id)
     except ValueError:
@@ -160,6 +202,8 @@ async def delete_session(session_id: str) -> dict:
         s = r.scalar_one_or_none()
         if not s:
             raise HTTPException(status_code=404, detail="session not found")
+        if _is_task_session(s):
+            raise HTTPException(status_code=404, detail="use DELETE /api/tasks/{id} for tasks")
         await db.execute(delete(Session).where(Session.id == sid))
         await log_audit(db, "delete_session", "session", details={"session_id": session_id})
     return {"status": "ok", "message": "session deleted"}
@@ -167,13 +211,23 @@ async def delete_session(session_id: str) -> dict:
 
 @router.get("/{session_id}/search")
 async def session_search(session_id: str, query: str, limit: int = 5) -> dict:
-    """Semantic search over session messages (embedding similarity)."""
+    """Semantic search over session messages（仅限对话）。"""
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="session not found")
+    factory = get_session_factory()
+    async with factory() as db:
+        r = await db.execute(select(Session).where(Session.id == sid))
+        s = r.scalar_one_or_none()
+        if not s:
+            raise HTTPException(status_code=404, detail="session not found")
+        if _is_task_session(s):
+            raise HTTPException(status_code=404, detail="search is for conversations only")
     vec = await get_embedding(query)
     if not vec:
         return {"matches": []}
-    # vec is from get_embedding (list of floats); format as PG vector literal for parameterized query
     vec_str = "[" + ",".join(str(x) for x in vec) + "]"
-    factory = get_session_factory()
     async with factory() as session:
         r = await session.execute(
             text("""

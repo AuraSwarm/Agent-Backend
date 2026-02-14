@@ -193,11 +193,13 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Cursor
-#  https://docs.cursor.com/context/ignore-files
-.cursor/
+# Cursor IDE — versioned: .cursor/rules/ only; rest = cache/output/local (长线迭代)
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
 .cursorignore
 .cursorindexingignore
+.cursorrules
 
 # Marimo
 marimo/_static/
@@ -213,5 +215,5 @@ Thumbs.db
 .env.*.local
 *.local
 
-# Project-local Postgres data (./run local can create .local/postgres-data)
+# Local / user-local data (e.g. .local/postgres-data-5433)
 .local/

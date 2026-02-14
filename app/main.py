@@ -17,7 +17,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config.loader import reload_config, start_config_watcher, validate_required_env
 from app import storage
-from app.routers import chat, code_review, health, sessions, tools
+from app.storage.long_term import get_long_term_backend
+from app.routers import chat, code_review, health, sessions, team_admin, team_room, tools
 
 logger = structlog.get_logger(__name__)
 
@@ -51,12 +52,23 @@ async def lifespan(app: FastAPI):
             ) from e
         raise
 
+    # 历史角色适配：为所有已有角色补齐必备的「对话」能力
+    try:
+        from app.routers.team_admin import ensure_all_roles_have_chat_ability
+        n = await ensure_all_roles_have_chat_ability()
+        if n:
+            logger.info("roles_migrated_chat_ability", count=n)
+    except Exception as e:
+        logger.warning("roles_migrate_chat_ability_skipped", error=str(e))
+
     def on_config_change(_event: str, path: str) -> None:
         reload_config()
         logger.info("config_reloaded", path=path)
 
     start_config_watcher(on_config_change)
-    logger.info("config_watcher_started")
+    # Initialize long-term memory backend (OSS when configured via Aura, else in-memory)
+    get_long_term_backend()
+    logger.info("long_term_storage_ready")
     logger.info("application_ready")
     yield
     logger.info("shutdown_start")
@@ -81,12 +93,14 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-# Include routers (no prefix so URLs stay /health, /sessions, /chat, /tools, /code-review*, /code-reviews*)
+# Include routers (no prefix so URLs stay /health, /sessions, /chat, /tools, /code-review*, /code-reviews*, /api/*)
 app.include_router(health.router)
 app.include_router(sessions.router)
 app.include_router(chat.router)
 app.include_router(tools.router)
 app.include_router(code_review.router)
+app.include_router(team_admin.router)
+app.include_router(team_room.router)
 
 
 # Optional web UI (when WEB_UI_DIR is set, e.g. by Aura pointing to Web-Service/static)
@@ -101,3 +115,8 @@ if STATIC_DIR is not None:
         return FileResponse(index_file)
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# AI 员工团队 Web UI（任务中心 + 角色管理）：/team/*
+_team_ui_dir = Path(__file__).resolve().parent.parent / "web-ui"
+if _team_ui_dir.is_dir():
+    app.mount("/team", StaticFiles(directory=str(_team_ui_dir), html=True), name="team_ui")

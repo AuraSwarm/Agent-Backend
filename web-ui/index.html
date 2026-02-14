@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>任务中心 - AI 员工协作中心</title>
+  <link rel="stylesheet" href="/team/style.css">
+</head>
+<body>
+  <script>if (window.location.search.indexOf('embed=1') !== -1) document.body.classList.add('embed');</script>
+  <div class="container">
+    <aside class="sidebar">
+      <button type="button" id="btn-new-task" class="sidebar-btn-new" title="新建任务（无需先发起对话）">新任务</button>
+      <div class="sidebar-section task-groups-section">
+        <h2 class="sidebar-section-title">任务分组</h2>
+        <button type="button" class="btn-new-group" id="btn-new-task-group" title="新建分组">+ 新分组</button>
+        <ul class="group-list" id="taskGroupList">
+          <li class="group-item active" data-group="all">全部</li>
+        </ul>
+      </div>
+      <div class="sidebar-section sidebar-tasks">
+        <h2 class="sidebar-section-title">最近任务</h2>
+        <div id="task-batch-actions" class="batch-actions" aria-hidden="true">
+          <label class="batch-checkbox-label">
+            <input type="checkbox" id="task-select-all" aria-label="全选任务">
+            <span>全选</span>
+          </label>
+          <button type="button" id="btn-batch-delete-tasks" class="btn-outline-sm btn-danger" disabled title="删除选中的任务">批量删除</button>
+        </div>
+        <div id="task-list" class="task-list-wrap" aria-live="polite">
+          <p id="task-list-loading" class="loading-inline">加载中…</p>
+        </div>
+      </div>
+    </aside>
+    <main class="main-content">
+      <div class="content-tabs" role="tablist" aria-label="Task, Role, Ability, Model">
+        <a href="/team/" class="content-tab active" role="tab" title="任务中心">Task</a>
+        <a href="/team/admin/roles.html" class="content-tab" role="tab" title="员工角色管理">Role</a>
+        <a href="/team/admin/abilities.html" class="content-tab" role="tab" title="能力管理">Ability</a>
+        <a href="/team/admin/models.html" class="content-tab" role="tab" title="模型管理">Model</a>
+      </div>
+      <div id="task-header" class="task-header">
+        <div class="task-header-left">
+          <h1 id="task-title">请选择任务</h1>
+          <div id="task-status" class="status-indicator status-placeholder" aria-hidden="true">—</div>
+          <div id="task-assignee-wrap" class="task-assignee-wrap" aria-hidden="true">
+            <span class="task-assignee-label">分配角色（可多选）</span>
+            <div id="task-assignee-role" class="task-assignee-checkbox-list" role="group" aria-label="选择执行该任务的角色（可多选）"></div>
+          </div>
+        </div>
+        <div id="task-actions" class="task-actions" aria-hidden="true">
+          <button type="button" id="btn-clear-messages" class="btn-outline-sm" title="清空该任务下所有消息">清空消息</button>
+          <button type="button" id="btn-delete-task" class="btn-outline-sm btn-danger" title="删除任务（不可恢复）">删除任务</button>
+        </div>
+      </div>
+      <div id="chat-container" class="chat-container" aria-live="polite">
+        <div id="empty-main" class="empty-state empty-state-main">
+          <div class="empty-state-icon" aria-hidden="true">📋</div>
+          <p class="empty-state-lead">从左侧选择一条任务</p>
+          <p class="empty-state-hint">选择任务后可在此查看群聊记录并在下方发送反馈。</p>
+        </div>
+      </div>
+      <div class="input-area">
+        <div class="input-area-row">
+          <div class="input-with-mention-wrap">
+            <textarea id="user-input" rows="2" placeholder="输入 @ 选择角色后可与其对话（角色具备对话能力）；不 @ 则仅作上下文。Enter / Shift+Enter 换行，Ctrl+Enter 发送" aria-label="反馈内容" autocomplete="off" disabled></textarea>
+            <div id="mention-dropdown" class="mention-dropdown" role="listbox" aria-hidden="true"></div>
+          </div>
+          <button type="button" id="send-btn" disabled>发送</button>
+        </div>
+        <p class="input-area-hint" aria-live="polite">支持 @ 对话：输入 <kbd>@</kbd> 从列表选择角色，发送后该角色将基于其对话能力回复。</p>
+      </div>
+    </main>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@11/lib/marked.umd.js"></script>
+  <script src="/team/script.js"></script>
+</body>
+</html>

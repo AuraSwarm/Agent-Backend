@@ -269,6 +269,29 @@ async def create_code_review(body: CodeReviewCreate) -> CodeReviewDetail:
     )
 
 
+class CodeReviewUpdateTitle(BaseModel):
+    title: str | None = None
+
+
+@router.patch("/code-reviews/{review_id}")
+async def update_code_review_title(review_id: str, body: CodeReviewUpdateTitle) -> dict:
+    """Update code review title (rename)."""
+    if body.title is None:
+        return {"status": "ok"}
+    try:
+        rid = uuid.UUID(review_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="review not found")
+    async with session_scope() as db:
+        r = await db.execute(select(CodeReview).where(CodeReview.id == rid))
+        rev = r.scalar_one_or_none()
+        if not rev:
+            raise HTTPException(status_code=404, detail="review not found")
+        rev.title = body.title.strip() or None
+        await db.commit()
+    return {"status": "ok"}
+
+
 @router.delete("/code-reviews/{review_id}")
 async def delete_code_review(review_id: str) -> dict:
     try:

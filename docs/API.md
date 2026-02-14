@@ -25,6 +25,7 @@ Chat completion with optional **streaming**, **deep thinking**, and **deep resea
 |-------|------|----------|---------|-------------|
 | `session_id` | string (UUID) | yes | — | Session identifier (create via `POST /sessions`). |
 | `messages` | array | yes | — | List of `{ "role": "user" \| "assistant" \| "system", "content": "..." }`. |
+| `user_id` | string \| null | no | — | Optional user id for long-term memory; when set and OSS is configured, profile and knowledge are injected into context. If omitted, `session_id` is used. |
 | `stream` | boolean | no | `true` | If `true`, response is SSE; if `false`, JSON with `choices`/`usage`/`duration_ms`. |
 | `model` | string \| null | no | provider default | Override chat model (e.g. `qwen-max`). |
 | `deep_thinking` | boolean | no | `false` | Use “深度思考” system prompt: step-by-step reasoning, lower temperature, larger `max_tokens`. |

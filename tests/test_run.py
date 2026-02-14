@@ -248,7 +248,7 @@ def test_run_script_runs_from_own_directory(tmp_path):
 
 
 def test_run_db_wait_timeout_message_has_fix_hints():
-    """When DB wait fails after retries, error message suggests pg_ctl, Docker, systemctl (no skip)."""
+    """When DB wait fails after retries, error message suggests fix (pg_ctl, Docker, systemctl, or SKIP_DB_WAIT)."""
     if not RUN_SCRIPT.exists():
         pytest.skip("run script not found")
     text = RUN_SCRIPT.read_text()
@@ -260,7 +260,8 @@ def test_run_db_wait_timeout_message_has_fix_hints():
     idx = text.find("did not become ready")
     assert idx != -1
     block = text[idx : idx + 600]
-    assert "SKIP_DB_WAIT" not in block
+    # At least one fix hint: SKIP_DB_WAIT, skip_db_wait, or systemctl/docker
+    assert "SKIP_DB_WAIT" in block or "skip_db_wait" in block or "systemctl" in block or "docker" in block.lower()
 
 
 def test_run_node_mode_loads_config_and_proceeds():

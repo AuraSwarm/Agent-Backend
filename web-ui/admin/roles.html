@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>员工角色管理 - AI 员工协作中心</title>
+  <link rel="stylesheet" href="/team/style.css">
+</head>
+<body>
+  <script>if (window.location.search.indexOf('embed=1') !== -1) document.body.classList.add('embed');</script>
+  <div class="container">
+    <aside class="sidebar sidebar-admin">
+      <nav class="content-tabs content-tabs-vertical" aria-label="Task, Role, Ability, Model">
+        <a href="/team/" class="content-tab" title="任务中心">Task</a>
+        <a href="/team/admin/roles.html" class="content-tab active" title="员工角色管理">Role</a>
+        <a href="/team/admin/abilities.html" class="content-tab" title="能力管理">Ability</a>
+        <a href="/team/admin/models.html" class="content-tab" title="模型管理">Model</a>
+      </nav>
+    </aside>
+    <main class="main-content">
+      <div class="content-tabs" role="tablist" aria-label="Task, Role, Ability, Model">
+        <a href="/team/" class="content-tab" role="tab" title="任务中心">Task</a>
+        <a href="/team/admin/roles.html" class="content-tab active" role="tab" title="员工角色管理">Role</a>
+        <a href="/team/admin/abilities.html" class="content-tab" role="tab" title="能力管理">Ability</a>
+        <a href="/team/admin/models.html" class="content-tab" role="tab" title="模型管理">Model</a>
+      </div>
+      <div class="page-header">
+        <h1>员工角色管理</h1>
+        <div class="page-header-actions">
+          <button type="button" id="config-reload-btn" class="btn-outline-sm" title="重新加载 config，使 models、abilities 等配置生效">刷新配置</button>
+          <button type="button" id="create-role-btn">新建角色</button>
+        </div>
+      </div>
+      <div id="roles-list" class="roles-list"></div>
+    </main>
+  </div>
+
+  <div id="role-test-result-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="role-test-result-title" aria-hidden="true">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="role-test-result-title">角色测试结果</h2>
+        <button type="button" class="modal-close" id="role-test-result-close" aria-label="关闭">×</button>
+      </div>
+      <div id="role-test-result-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="role-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-title">新建 AI 员工角色</h2>
+        <button type="button" class="modal-close" id="modal-close-btn" aria-label="关闭">×</button>
+      </div>
+      <form id="role-form" class="modal-body">
+        <div class="form-group">
+          <label for="role-name">角色名</label>
+          <input type="text" id="role-name" required placeholder="例如 analyst">
+        </div>
+        <div class="form-group">
+          <label for="role-description">描述</label>
+          <input type="text" id="role-description" placeholder="角色职责简述">
+        </div>
+        <div class="form-group">
+          <label for="role-status">状态</label>
+          <select id="role-status">
+            <option value="enabled">启用</option>
+            <option value="disabled">禁用</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>绑定能力</label>
+          <p class="form-hint form-hint-above">可多选，勾选即绑定多种能力</p>
+          <div class="abilities-list-toolbar">
+            <button type="button" id="role-abilities-select-all" class="btn-outline-sm">全选</button>
+            <button type="button" id="role-abilities-deselect-all" class="btn-outline-sm">取消全选</button>
+          </div>
+          <div id="role-abilities-list" class="abilities-checkbox-list" role="group" aria-label="绑定能力"></div>
+        </div>
+        <div class="form-group">
+          <label for="role-model">绑定模型</label>
+          <select id="role-model" title="该角色调用时使用的对话模型">
+            <option value="">（使用全局默认）</option>
+          </select>
+          <span class="form-hint">可选；不选则使用 config 默认模型</span>
+        </div>
+        <div class="form-group">
+          <label for="role-prompt">系统提示词</label>
+          <textarea id="role-prompt" placeholder="该角色与 AI 对话时的系统设定与约束"></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="submit">保存角色</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <script src="/team/admin/admin-roles.js"></script>
+</body>
+</html>

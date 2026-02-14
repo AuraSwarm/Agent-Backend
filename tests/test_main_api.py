@@ -11,6 +11,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+# API connection test prompt and expected reply for chat tests
+CHAT_API_TEST_PROMPT = "????api ???????????????"
+CHAT_API_TEST_EXPECTED = "????"
+
+
+def _make_async_return(value):
+    """Return a callable that returns a fresh coroutine (run in awaiter's loop, not test loop)."""
+    async def _():
+        return value
+    def _call(*args, **kwargs):
+        return _()
+    return _call
+
 
 @pytest.fixture
 def mock_db():
@@ -20,18 +33,21 @@ def mock_db():
 
     result_mock = MagicMock()
     result_mock.fetchall.return_value = []
+    fake_session = MagicMock()
+    fake_session.metadata_ = {}
+    result_mock.scalar_one_or_none = MagicMock(return_value=fake_session)
 
     session_mock = MagicMock()
-    session_mock.execute = AsyncMock(return_value=result_mock)
-    session_mock.commit = AsyncMock(return_value=None)
-    session_mock.rollback = AsyncMock(return_value=None)
+    session_mock.execute = _make_async_return(result_mock)
+    session_mock.commit = _make_async_return(None)
+    session_mock.rollback = _make_async_return(None)
 
     def add_and_assign_id(obj):
         if not getattr(obj, "id", None):
             obj.id = uuid.uuid4()
 
     session_mock.add = add_and_assign_id
-    session_mock.flush = AsyncMock(return_value=None)
+    session_mock.flush = _make_async_return(None)
 
     class Ctx:
         async def __aenter__(self):
@@ -46,9 +62,18 @@ def mock_db():
     factory_mock = MagicMock()
     factory_mock.return_value = Ctx()
 
+    # Patch at storage.db and at each router so all code paths use the mock (routers import at load time)
     with patch("app.storage.db.init_db", side_effect=noop_init_db), patch(
         "app.storage.db.get_session_factory", return_value=factory_mock
-    ), patch("app.storage.db.session_scope", new=session_scope):
+    ), patch("app.storage.db.session_scope", new=session_scope), patch(
+        "app.routers.chat.session_scope", new=session_scope
+    ), patch("app.routers.chat.get_session_factory", return_value=factory_mock), patch(
+        "app.routers.health.session_scope", new=session_scope
+    ), patch("app.routers.health.get_session_factory", return_value=factory_mock), patch(
+        "app.routers.sessions.session_scope", new=session_scope
+    ), patch("app.routers.sessions.get_session_factory", return_value=factory_mock), patch(
+        "app.routers.code_review.session_scope", new=session_scope
+    ), patch("app.routers.code_review.get_session_factory", return_value=factory_mock):
         yield session_mock
 
 
@@ -56,16 +81,20 @@ def mock_db():
 def client(mock_db):
     """TestClient with mocked DB, chat adapter, and embedding (no real API key needed)."""
     async def fake_stream(*args, **kwargs):
-        yield "ok"
+        yield CHAT_API_TEST_EXPECTED
 
     async def fake_embedding(*args, **kwargs):
         return [0.0] * 1536  # dummy vector for session search
 
     with patch("app.main.validate_required_env"), patch(
-        "app.routers.chat.CloudAPIAdapter"
-    ) as AdapterMock, patch("app.routers.sessions.get_embedding", side_effect=fake_embedding):
-        AdapterMock.return_value.call = AsyncMock(return_value=("ok", {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}))
-        AdapterMock.return_value.stream_call = fake_stream
+        "app.adapters.factory.build_chat_adapter"
+    ) as build_adapter_mock, patch("app.routers.sessions.get_embedding", side_effect=fake_embedding):
+        mock_adapter = MagicMock()
+        mock_adapter.call = AsyncMock(
+            return_value=(CHAT_API_TEST_EXPECTED, {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7})
+        )
+        mock_adapter.stream_call = fake_stream
+        build_adapter_mock.return_value = mock_adapter
         from app.main import app
         with TestClient(app) as c:
             yield c
@@ -99,12 +128,12 @@ def test_create_session(client):
 
 
 def test_chat_non_stream(client):
-    """POST /chat with stream=false returns choices, usage, duration_ms."""
+    """POST /chat API ???????????????????????????? choices/usage/duration_ms?"""
     r = client.post(
         "/chat",
         json={
             "session_id": "00000000-0000-0000-0000-000000000001",
-            "messages": [{"role": "user", "content": "Say hi"}],
+            "messages": [{"role": "user", "content": CHAT_API_TEST_PROMPT}],
             "stream": False,
         },
     )
@@ -115,6 +144,8 @@ def test_chat_non_stream(client):
         assert len(data["choices"]) >= 1
         assert "usage" in data
         assert "duration_ms" in data
+        content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        assert CHAT_API_TEST_EXPECTED in content, "?????????????"
 
 
 def test_chat_deep_thinking_non_stream(client):
@@ -123,7 +154,7 @@ def test_chat_deep_thinking_non_stream(client):
         "/chat",
         json={
             "session_id": "00000000-0000-0000-0000-000000000001",
-            "messages": [{"role": "user", "content": "如何降低企业碳排放？"}],
+            "messages": [{"role": "user", "content": "??????????"}],
             "stream": False,
             "deep_thinking": True,
         },
@@ -142,7 +173,7 @@ def test_chat_deep_research_non_stream(client):
         "/chat",
         json={
             "session_id": "00000000-0000-0000-0000-000000000001",
-            "messages": [{"role": "user", "content": "如何进一步优化深度思考功能的实现逻辑？"}],
+            "messages": [{"role": "user", "content": "???????????????????"}],
             "stream": False,
             "deep_research": True,
         },
@@ -192,7 +223,7 @@ def test_chat_accepts_optional_params(client):
         "/chat",
         json={
             "session_id": "00000000-0000-0000-0000-000000000001",
-            "messages": [{"role": "user", "content": "Hi"}],
+            "messages": [{"role": "user", "content": CHAT_API_TEST_PROMPT}],
             "stream": False,
             "model": None,
             "deep_thinking": False,
@@ -205,15 +236,181 @@ def test_chat_accepts_optional_params(client):
         assert "choices" in data
         assert "usage" in data
         assert "duration_ms" in data
+        content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        assert CHAT_API_TEST_EXPECTED in content
+
+
+def test_chat_system_message_passed_to_adapter(client):
+    """POST /chat ? system+user?adapter ???? messages??? API ?????????????????"""
+    role_system = "You are an analyst. Reply briefly."
+    user_content = CHAT_API_TEST_PROMPT
+    with patch("app.adapters.factory.build_chat_adapter") as build_adapter_mock:
+        mock_adapter = MagicMock()
+        mock_adapter.call = AsyncMock(
+            return_value=(CHAT_API_TEST_EXPECTED, {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12})
+        )
+        build_adapter_mock.return_value = mock_adapter
+        r = client.post(
+            "/chat",
+            json={
+                "session_id": "00000000-0000-0000-0000-000000000001",
+                "messages": [
+                    {"role": "system", "content": role_system},
+                    {"role": "user", "content": user_content},
+                ],
+                "stream": False,
+            },
+        )
+    assert r.status_code == 200
+    data = r.json()
+    assert "choices" in data and len(data["choices"]) >= 1
+    content = data["choices"][0].get("message", {}).get("content") or ""
+    assert CHAT_API_TEST_EXPECTED in content, "?????????????"
+    call_kw = mock_adapter.call.call_args[1]
+    messages = call_kw.get("messages", [])
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    assert any(role_system in (m.get("content") or "") for m in system_msgs)
+    user_msgs = [m for m in messages if m.get("role") == "user"]
+    assert any(user_content in (m.get("content") or "") for m in user_msgs)
+
+
+def test_chat_resolves_provider_by_model_claude(mock_db):
+    """POST /chat with model=claude-* ??? anthropic??? API ?????????????????"""
+    from unittest.mock import AsyncMock
+
+    dashscope_prov = MagicMock()
+    dashscope_prov.model = "qwen-max"
+    dashscope_prov.models = ["qwen-max", "qwen3-max"]
+    anthropic_prov = MagicMock()
+    anthropic_prov.model = "claude-3-5-sonnet-20241022"
+    anthropic_prov.models = ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"]
+
+    config_mock = MagicMock()
+    config_mock.chat_providers = {"dashscope": dashscope_prov, "anthropic": anthropic_prov}
+    config_mock.default_chat_provider = "dashscope"
+
+    mock_adapter = MagicMock()
+    mock_adapter.call = AsyncMock(return_value=(CHAT_API_TEST_EXPECTED, {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}))
+
+    with patch("app.routers.chat.get_config", return_value=config_mock), patch(
+        "app.adapters.factory.build_chat_adapter"
+    ) as build_mock:
+        build_mock.return_value = mock_adapter
+        from app.main import app
+        with TestClient(app) as c:
+            r = c.post(
+                "/chat",
+                json={
+                    "session_id": "00000000-0000-0000-0000-000000000001",
+                    "messages": [{"role": "user", "content": CHAT_API_TEST_PROMPT}],
+                    "stream": False,
+                    "model": "claude-3-5-sonnet-20241022",
+                },
+            )
+    assert r.status_code == 200
+    build_mock.assert_called_once()
+    call_prov, call_model = build_mock.call_args[0]
+    assert call_model == "claude-3-5-sonnet-20241022"
+    assert getattr(call_prov, "models", None) == ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022"]
+    content = r.json().get("choices", [{}])[0].get("message", {}).get("content") or ""
+    assert CHAT_API_TEST_EXPECTED in content, "?????????????"
+
+
+def test_chat_resolves_provider_cursor_local(mock_db):
+    """POST /chat with model=cursor-local ?? cursor-local provider?API ?????????????????"""
+    dashscope_prov = MagicMock()
+    dashscope_prov.model = "qwen-max"
+    dashscope_prov.models = ["qwen-max"]
+    cursor_prov = MagicMock()
+    cursor_prov.type = "claude_local"
+    cursor_prov.model = "cursor-local"
+    cursor_prov.models = ["cursor-local"]
+    cursor_prov.command = ["agent", "-p"]
+    cursor_prov.timeout = 120
+
+    config_mock = MagicMock()
+    config_mock.chat_providers = {"dashscope": dashscope_prov, "cursor-local": cursor_prov}
+    config_mock.default_chat_provider = "dashscope"
+
+    mock_adapter = MagicMock()
+    mock_adapter.call = AsyncMock(return_value=(CHAT_API_TEST_EXPECTED, {}))
+
+    with patch("app.routers.chat.get_config", return_value=config_mock), patch(
+        "app.adapters.factory.build_chat_adapter"
+    ) as build_mock:
+        build_mock.return_value = mock_adapter
+        from app.main import app
+        with TestClient(app) as c:
+            r = c.post(
+                "/chat",
+                json={
+                    "session_id": "00000000-0000-0000-0000-000000000001",
+                    "messages": [{"role": "user", "content": CHAT_API_TEST_PROMPT}],
+                    "stream": False,
+                    "model": "cursor-local",
+                },
+            )
+    assert r.status_code == 200
+    build_mock.assert_called_once()
+    call_prov, call_model = build_mock.call_args[0]
+    assert call_model == "cursor-local"
+    assert getattr(call_prov, "models", None) == ["cursor-local"]
+    data = r.json()
+    content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+    assert CHAT_API_TEST_EXPECTED in content
+
+
+def test_chat_resolves_provider_copilot_local(mock_db):
+    """POST /chat with model=copilot-local ?? copilot-local provider?API ?????????????????"""
+    dashscope_prov = MagicMock()
+    dashscope_prov.model = "qwen-max"
+    dashscope_prov.models = ["qwen-max"]
+    copilot_prov = MagicMock()
+    copilot_prov.type = "claude_local"
+    copilot_prov.model = "copilot-local"
+    copilot_prov.models = ["copilot-local"]
+    copilot_prov.command = ["copilot", "-p"]
+    copilot_prov.timeout = 120
+
+    config_mock = MagicMock()
+    config_mock.chat_providers = {"dashscope": dashscope_prov, "copilot-local": copilot_prov}
+    config_mock.default_chat_provider = "dashscope"
+
+    mock_adapter = MagicMock()
+    mock_adapter.call = AsyncMock(return_value=(CHAT_API_TEST_EXPECTED, {}))
+
+    with patch("app.routers.chat.get_config", return_value=config_mock), patch(
+        "app.adapters.factory.build_chat_adapter"
+    ) as build_mock:
+        build_mock.return_value = mock_adapter
+        from app.main import app
+        with TestClient(app) as c:
+            r = c.post(
+                "/chat",
+                json={
+                    "session_id": "00000000-0000-0000-0000-000000000001",
+                    "messages": [{"role": "user", "content": CHAT_API_TEST_PROMPT}],
+                    "stream": False,
+                    "model": "copilot-local",
+                },
+            )
+    assert r.status_code == 200
+    build_mock.assert_called_once()
+    call_prov, call_model = build_mock.call_args[0]
+    assert call_model == "copilot-local"
+    assert getattr(call_prov, "models", None) == ["copilot-local"]
+    data = r.json()
+    content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+    assert CHAT_API_TEST_EXPECTED in content
 
 
 def test_chat_non_stream_usage_schema(client):
-    """POST /chat non-stream response usage has expected shape (prompt/completion/total_tokens)."""
+    """POST /chat API ???????? non-stream ??? usage ???????????????"""
     r = client.post(
         "/chat",
         json={
             "session_id": "00000000-0000-0000-0000-000000000001",
-            "messages": [{"role": "user", "content": "One word"}],
+            "messages": [{"role": "user", "content": CHAT_API_TEST_PROMPT}],
             "stream": False,
         },
     )
@@ -222,18 +419,19 @@ def test_chat_non_stream_usage_schema(client):
         data = r.json()
         assert isinstance(data.get("usage"), dict)
         u = data["usage"]
-        # Mock returns prompt_tokens, completion_tokens, total_tokens
         assert "total_tokens" in u or "prompt_tokens" in u or "completion_tokens" in u
         assert isinstance(data.get("duration_ms"), (int, float))
+        content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        assert CHAT_API_TEST_EXPECTED in content
 
 
 def test_chat_stream_event_format(client):
-    """POST /chat stream: events include content deltas and a final stats event."""
+    """POST /chat ????? API ???????? events ? content deltas ?????????? stats?"""
     r = client.post(
         "/chat",
         json={
             "session_id": "00000000-0000-0000-0000-000000000001",
-            "messages": [{"role": "user", "content": "x"}],
+            "messages": [{"role": "user", "content": CHAT_API_TEST_PROMPT}],
             "stream": True,
         },
     )
@@ -260,6 +458,8 @@ def test_chat_stream_event_format(client):
                 pass
         assert stats_event is not None, "stream must contain one stats event (usage/duration_ms)"
         assert "duration_ms" in stats_event
+        full_content = "".join(content_parts)
+        assert CHAT_API_TEST_EXPECTED in full_content
 
 
 def test_chat_deep_research_priority_when_both_true(client):
@@ -268,7 +468,7 @@ def test_chat_deep_research_priority_when_both_true(client):
         "/chat",
         json={
             "session_id": "00000000-0000-0000-0000-000000000001",
-            "messages": [{"role": "user", "content": "Test"}],
+            "messages": [{"role": "user", "content": CHAT_API_TEST_PROMPT}],
             "stream": False,
             "deep_thinking": True,
             "deep_research": True,
@@ -278,7 +478,8 @@ def test_chat_deep_research_priority_when_both_true(client):
     if r.status_code == 200:
         data = r.json()
         assert "choices" in data and len(data["choices"]) >= 1
-        assert data["choices"][0].get("message", {}).get("content") is not None
+        content = data["choices"][0].get("message", {}).get("content") or ""
+        assert CHAT_API_TEST_EXPECTED in content
 
 
 def test_session_search(client):
@@ -416,7 +617,12 @@ def test_code_reviews_delete_invalid_uuid_404(client):
     assert r.status_code == 404
 
 
-def test_root_not_found(client):
-    """Backend is API-only; web UI is served by Web-Service. GET / returns 404."""
+def test_root_or_main_ui(client):
+    """GET /: 404 when API-only; 200 with main UI when WEB_UI_DIR is set (Aura)."""
     r = client.get("/")
-    assert r.status_code == 404
+    if r.status_code == 404:
+        return
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+    html = r.text
+    assert "Chat" in html or "messages" in html
