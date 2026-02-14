@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] – branch `sandbox/jy/split_function`
+## [Unreleased] – branch `sandbox/jy/split_function` (2026-02-12)
 
 ### Changed
 
